@@ -1,0 +1,13 @@
+{
+  "name": "ssb-webrtc",
+  "version": "0.1.0",
+  "description": "WebRTC signaling and peer connection management over Secure Scuttlebutt",
+  "main": "index.js",
+  "license": "AGPL-3.0",
+  "keywords": ["ssb", "scuttlebutt", "webrtc", "p2p", "signaling"],
+  "dependencies": {},
+  "peerDependencies": {
+    "secret-stack": "^6.0.0",
+    "ssb-db": ">=19.0.0"
+  }
+}
