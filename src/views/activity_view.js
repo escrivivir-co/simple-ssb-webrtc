@@ -1,0 +1,1609 @@
+const { div, h2, p, section, button, form, a, input, img, textarea, br, span, video: videoHyperaxe, audio: audioHyperaxe, table, tr, td, th } = require("../server/node_modules/hyperaxe");
+const { template, i18n } = require('./main_views');
+const moment = require("../server/node_modules/moment");
+const { renderUrl } = require('../backend/renderUrl');
+const { getConfig } = require("../configs/config-manager.js");
+const { sanitizeHtml } = require('../backend/sanitizeHtml');
+
+const renderMediaBlob = (value, fallbackSrc = null) => {
+  if (!value) return fallbackSrc ? img({ src: fallbackSrc }) : null
+  const s = String(value).trim()
+  if (!s) return fallbackSrc ? img({ src: fallbackSrc }) : null
+  if (s.startsWith('&')) return img({ src: `/blob/${encodeURIComponent(s)}` })
+  const mVideo = s.match(/\[video:[^\]]*\]\(\s*(&[^)\s]+\.sha256)\s*\)/)
+  if (mVideo) return videoHyperaxe({ controls: true, class: 'post-video', src: `/blob/${encodeURIComponent(mVideo[1])}` })
+  const mAudio = s.match(/\[audio:[^\]]*\]\(\s*(&[^)\s]+\.sha256)\s*\)/)
+  if (mAudio) return audioHyperaxe({ controls: true, class: 'post-audio', src: `/blob/${encodeURIComponent(mAudio[1])}` })
+  const mImg = s.match(/!\[[^\]]*\]\(\s*(&[^)\s]+\.sha256)\s*\)/)
+  if (mImg) return img({ src: `/blob/${encodeURIComponent(mImg[1])}`, class: 'post-image' })
+  return fallbackSrc ? img({ src: fallbackSrc }) : null
+}
+
+const FEED_TEXT_MIN = Number(getConfig().feed?.minLength ?? 1);
+const FEED_TEXT_MAX = Number(getConfig().feed?.maxLength ?? 280);
+
+function cleanFeedText(t) {
+  return typeof t === 'string' ? t.trim() : '';
+}
+
+function isValidFeedText(t) {
+  const s = cleanFeedText(t);
+  return s.length >= FEED_TEXT_MIN && s.length <= FEED_TEXT_MAX;
+}
+
+function capitalize(str) {
+  return typeof str === 'string' && str.length ? str[0].toUpperCase() + str.slice(1) : '';
+}
+function sumAmounts(list = []) {
+  return list.reduce((s, x) => s + (parseFloat(x.amount || 0) || 0), 0);
+}
+
+function pickActiveParliamentTerm(terms) {
+  if (!terms.length) return null;
+  const now = Date.now();
+  const getC = t => t.value?.content || t.content || {};
+  const isActive = t => {
+    const c = getC(t);
+    const s = new Date(c.startAt || 0).getTime();
+    const e = new Date(c.endAt || 0).getTime();
+    return s && e && s <= now && now < e;
+  };
+  const cmp = (a, b) => {
+    const ca = getC(a);
+    const cb = getC(b);
+    const aAn = String(ca.method || '').toUpperCase() === 'ANARCHY' ? 1 : 0;
+    const bAn = String(cb.method || '').toUpperCase() === 'ANARCHY' ? 1 : 0;
+    if (aAn !== bAn) return aAn - bAn;
+    const aC = new Date(ca.createdAt || ca.startAt || 0).getTime();
+    const bC = new Date(cb.createdAt || cb.startAt || 0).getTime();
+    if (aC !== bC) return aC - bC;
+    const aS = new Date(ca.startAt || 0).getTime();
+    const bS = new Date(cb.startAt || 0).getTime();
+    if (aS !== bS) return aS - bS;
+    return String(a.id || '').localeCompare(String(b.id || ''));
+  };
+  const active = terms.filter(isActive);
+  if (active.length) return active.sort(cmp)[0];
+  return terms.sort(cmp)[0];
+}
+
+function safeMsgId(x) {
+  if (typeof x === 'string') return x;
+  if (x && typeof x === 'object') return x.key || x.id || x.link || '';
+  return '';
+}
+
+function normalizeSpreadLink(x) {
+  const s = safeMsgId(x);
+  return typeof s === 'string' && s.startsWith('thread:') ? s.slice(7) : s;
+}
+
+function stripHtml(s) {
+  return String(s || '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function excerptPostText(content, max = 220) {
+  const raw = stripHtml(content?.text || content?.description || content?.title || '');
+  if (!raw) return '';
+  return raw.length > max ? raw.slice(0, max - 1) + '…' : raw;
+}
+
+const decodeMaybe = (s) => {
+    try { return decodeURIComponent(String(s || '')); } catch { return String(s || ''); }
+};
+
+const rewriteHashtagLinks = (html) => {
+    const s = String(html || '');
+    return s.replace(/href=(["'])(?:https?:\/\/[^"']+)?\/hashtag\/([^"'?#]+)([^"']*)\1/g, (m, q, tag, rest) => {
+        const t = decodeMaybe(tag).replace(/^#/, '').trim().toLowerCase();
+        const href = `/search?query=%23${encodeURIComponent(t)}`;
+        return `href=${q}${href}${q}`;
+    });
+};
+
+function renderUrlPreserveNewlines(text) {
+  const s = String(text || '');
+  const lines = s.split(/\r\n|\r|\n/);
+  const out = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (i) out.push(br());
+    out.push(...renderUrl(lines[i]));
+  }
+  return out;
+}
+
+function getThreadIdFromPost(action) {
+  const c = action.value?.content || action.content || {};
+  const fork = safeMsgId(c.fork);
+  const root = safeMsgId(c.root);
+  return fork || root || safeMsgId(action);
+}
+
+function getReplyToIdFromPost(action, byId) {
+  const c = action.value?.content || action.content || {};
+  const root = safeMsgId(c.root);
+  const branch = Array.isArray(c.branch) ? c.branch.filter(x => typeof x === 'string') : [];
+  let best = '';
+  let bestTs = -1;
+  for (const id of branch) {
+    const a = byId.get(id);
+    if (a && (a.ts || 0) > bestTs) { best = id; bestTs = a.ts || 0; }
+  }
+  return best || root || '';
+}
+
+function buildActivityItemsWithPostThreads(deduped, allActions) {
+  const byId = new Map();
+  for (const a of allActions) {
+    const id = safeMsgId(a);
+    if (id) byId.set(id, a);
+  }
+  for (const a of deduped) {
+    const id = safeMsgId(a);
+    if (id) byId.set(id, a);
+  }
+
+  const groups = new Map();
+  const out = [];
+
+  for (const a of deduped) {
+    if (a.type !== 'post') {
+      out.push(a);
+      continue;
+    }
+    const threadId = getThreadIdFromPost(a);
+    if (!groups.has(threadId)) groups.set(threadId, []);
+    groups.get(threadId).push(a);
+  }
+
+  for (const [threadId, posts] of groups.entries()) {
+    const sortedDesc = posts.slice().sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    const hasReplies = sortedDesc.some(p => getThreadIdFromPost(p) !== safeMsgId(p)) || sortedDesc.length > 1;
+
+    if (!hasReplies || sortedDesc.length === 1) {
+      out.push(sortedDesc[0]);
+      continue;
+    }
+
+    const latest = sortedDesc[0];
+    let rootAction = byId.get(threadId);
+    let rootId = threadId;
+
+    if (!rootAction) {
+      const asc = posts.slice().sort((a, b) => (a.ts || 0) - (b.ts || 0));
+      rootAction = asc[0] || null;
+      rootId = safeMsgId(rootAction) || threadId;
+    } else {
+      rootId = safeMsgId(rootAction) || threadId;
+    }
+
+    const replies = sortedDesc
+      .filter(p => safeMsgId(p) !== rootId)
+      .slice()
+      .sort((a, b) => (a.ts || 0) - (b.ts || 0));
+
+    out.push({
+      id: `thread:${threadId}`,
+      type: 'postThread',
+      author: latest.author,
+      ts: latest.ts,
+      content: {
+        threadId,
+        root: rootAction
+          ? {
+              id: safeMsgId(rootAction),
+              author: rootAction.author,
+              text: excerptPostText(rootAction.value?.content || rootAction.content || {}, 240)
+            }
+          : null,
+        replies: replies.map(p => ({
+          id: safeMsgId(p),
+          author: p.author,
+          ts: p.ts,
+          text: excerptPostText(p.value?.content || p.content || {}, 200)
+        }))
+      }
+    });
+  }
+
+  out.sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  return out;
+}
+
+function renderActionCards(actions, userId, allActions) {
+  const all = Array.isArray(allActions) ? allActions : actions;
+  const byIdAll = new Map();
+  for (const a0 of all) {
+    const id0 = safeMsgId(a0);
+    if (id0) byIdAll.set(id0, a0);
+  }
+  const profileById = new Map();
+  for (const a0 of all) {
+    if (!a0 || a0.type !== 'about') continue;
+    const c0 = a0.value?.content || a0.content || {};
+    const id0 = c0.about || a0.author || '';
+    if (!id0) continue;
+    const name0 = (typeof c0.name === 'string' && c0.name.trim()) ? c0.name.trim() : id0;
+    const image0 = (typeof c0.image === 'string' && c0.image.trim()) ? c0.image.trim() : '';
+    const ts0 = a0.ts || 0;
+    const prev = profileById.get(id0);
+    if (!prev) {
+      profileById.set(id0, { id: id0, name: name0, image: image0, ts: ts0 });
+      continue;
+    }
+    const prevHasImg = !!prev.image;
+    const newHasImg = !!image0;
+    if (!prevHasImg && newHasImg) profileById.set(id0, { id: id0, name: name0, image: image0, ts: ts0 });
+    else if (prevHasImg === newHasImg && ts0 > (prev.ts || 0)) profileById.set(id0, { id: id0, name: name0, image: image0, ts: ts0 });
+  }
+  const getProfile = (id) => {
+    const p0 = profileById.get(id);
+    return p0 ? { id: p0.id, name: p0.name, image: p0.image } : { id, name: id, image: '' };
+  };
+  const validActions = actions
+    .filter(action => {
+      const content = action.value?.content || action.content;
+      if (!content || typeof content !== 'object') return false;
+      if (content.type === 'tombstone') return false;
+      if (content.type === 'post' && content.private === true) return false;
+      if (content.type === 'tribe' && content.isAnonymous === true) return false;
+      if (typeof content.type === 'string' && content.type.startsWith('tribe') && content.isAnonymous === true) return false;
+      if (content.type === 'task' && content.isPublic === "PRIVATE") return false;
+      if (content.type === 'event' && content.isPublic === "private") return false;
+      if ((content.type === 'feed' || action.type === 'feed') && !isValidFeedText(content.text)) return false;
+      if (content.type === 'market') {
+        if (content.stock === 0 && content.status !== 'SOLD') {
+          return false;
+        }
+      }
+      return true;
+    })
+    .sort((a, b) => b.ts - a.ts);
+
+  const terms = validActions.filter(a => a.type === 'parliamentTerm');
+  let chosenTerm = null;
+  if (terms.length) chosenTerm = pickActiveParliamentTerm(terms);
+  const deduped = chosenTerm
+    ? validActions.filter(a => a.type !== 'parliamentTerm' || a === chosenTerm)
+    : validActions;
+
+  if (!deduped.length) {
+    return div({ class: "no-actions" }, p(i18n.noActions));
+  }
+
+  const seenDocumentTitles = new Set();
+  const items = buildActivityItemsWithPostThreads(deduped, all);
+
+  const spreadOrdinalById = new Map();
+  const spreadsByLink = new Map();
+
+  for (const a of all) {
+    if (!a || a.type !== 'spread') continue;
+    const c = a.value?.content || a.content || {};
+    const link = normalizeSpreadLink(c.spreadTargetId || c.vote?.link || '');
+    const aId = safeMsgId(a);
+    if (!link || !aId) continue;
+    if (!spreadsByLink.has(link)) spreadsByLink.set(link, []);
+    spreadsByLink.get(link).push(a);
+  }
+
+  for (const list of spreadsByLink.values()) {
+    list.sort((a, b) => (a.ts || 0) - (b.ts || 0) || String(safeMsgId(a) || '').localeCompare(String(safeMsgId(b) || '')));
+    for (let i = 0; i < list.length; i++) {
+      spreadOrdinalById.set(safeMsgId(list[i]), i + 1);
+    } 
+  }
+
+  const cards = items.map(action => {
+    const date = action.ts ? new Date(action.ts).toLocaleString() : "";
+    const userLink = action.author
+      ? a({ href: `/author/${encodeURIComponent(action.author)}` }, action.author)
+      : 'unknown';
+    const type = action.type || 'unknown';
+    let skip = false;
+    let headerText;
+    if (type.startsWith('parliament')) {
+      const sub = type.replace('parliament', '');
+      headerText = `[PARLIAMENT · ${sub.toUpperCase()}]`;
+    } else if (type.startsWith('courts')) {
+      const rawSub = type.slice('courts'.length);
+      const pretty = rawSub
+        .replace(/^[_\s]+/, '')
+        .replace(/[_\s]+/g, ' · ')
+        .replace(/([a-z])([A-Z])/g, '$1 · $2');
+      const finalSub = pretty || 'EVENT';
+      headerText = `[COURTS · ${finalSub.toUpperCase()}]`;
+    } else if (type === 'taskAssignment') {
+      headerText = `[${String(i18n.typeTask || 'TASK').toUpperCase()} · ASSIGNMENT]`;
+    } else if (type === 'tribeJoin') {
+      headerText = `[TRIBE · ${String(i18n.tribeActivityJoined || 'JOIN').toUpperCase()}]`;
+    } else if (type === 'tribeLeave') {
+      headerText = `[TRIBE · ${String(i18n.tribeActivityLeft || 'LEAVE').toUpperCase()}]`;
+    } else if (type === 'tribeFeedPost') {
+      headerText = `[TRIBE · FEED]`;
+    } else if (type === 'tribeFeedRefeed') {
+      headerText = `[TRIBE · REFEED]`;
+    } else {
+      const typeLabel = i18n[`type${capitalize(type)}`] || type;
+      headerText = `[${String(typeLabel).toUpperCase()}]`;
+    }
+
+    const content = action.value?.content || action.content || {};
+    const cardBody = [];
+
+    if (type === 'votes') {
+      const { question, deadline, status, votes, totalVotes } = content;
+      const commentCount =
+        typeof action.commentCount === 'number'
+          ? action.commentCount
+          : (typeof content.commentCount === 'number' ? content.commentCount : 0);
+
+      const votesList = votes && typeof votes === 'object'
+        ? Object.entries(votes).map(([option, count]) => ({ option, count }))
+        : [];
+
+      cardBody.push(
+        div({ class: 'card-section votes' },
+          div(
+            { class: 'card-field' },
+            span({ class: 'card-label' }, i18n.question + ':'),
+            span({ class: 'card-value' }, question)
+          ),
+          div(
+            { class: 'card-field' },
+            span({ class: 'card-label' }, i18n.deadline + ':'),
+            span({ class: 'card-value' }, deadline ? new Date(deadline).toLocaleString() : '')
+          ),
+          div(
+            { class: 'card-field' },
+            span({ class: 'card-label' }, i18n.voteTotalVotes + ':'),
+            span({ class: 'card-value' }, totalVotes)
+          ),
+          div(
+            { class: 'card-field' },
+            span({ class: 'card-label' }, i18n.voteCommentsLabel + ':'),
+            span({ class: 'card-value' }, String(commentCount))
+          ),
+          table(
+            tr(...votesList.map(({ option }) => th(i18n[option] || option))),
+            tr(...votesList.map(({ count }) => td(count)))
+          )
+        )
+      );
+    }
+
+    if (type === 'transfer') {
+      const { from, to, concept, amount, deadline, status, confirmedBy } = content;
+      cardBody.push(
+        div({ class: 'card-section transfer' },
+          div({ class: 'card-field' }, span({ class: 'card-label' }, i18n.concept + ':'), span({ class: 'card-value' }, concept)),
+          div({ class: 'card-field' }, span({ class: 'card-label' }, i18n.amount + ':'), span({ class: 'card-value' }, amount)),
+          div({ class: 'card-field' }, span({ class: 'card-label' }, i18n.deadline + ':'), span({ class: 'card-value' }, deadline ? new Date(deadline).toLocaleString() : '')),
+          div({ class: 'card-field' }, span({ class: 'card-label' }, i18n.status + ':'), span({ class: 'card-value' }, status))
+        )
+      );
+    }
+
+    if (type === 'bankWallet') {
+      const { address } = content;
+      cardBody.push(
+        div({ class: 'card-section banking-wallet' },
+          div({ class: 'card-field' },
+            span({ class: 'card-label' }, i18n.bankWalletConnected + ':' ),
+            span({ class: 'card-value' }, address)
+          )
+        )
+      );
+    }
+
+    if (type === 'bankClaim') {
+      const { amount, epochId, allocationId, txid } = content;
+      const amt = Number(amount || 0);
+      cardBody.push(
+        div({ class: 'card-section banking-claim' },
+          div({ class: 'card-field' },
+            span({ class: 'card-label' }, i18n.bankUbiReceived + ':' ),
+            span({ class: 'card-value' }, `${amt.toFixed(6)} ECO`)
+          ),
+          epochId ? div({ class: 'card-field' },
+            span({ class: 'card-label' }, i18n.bankEpochShort + ':' ),
+            span({ class: 'card-value' }, epochId)
+          ) : "",
+          allocationId ? div({ class: 'card-field' },
+            span({ class: 'card-label' }, i18n.bankAllocId + ':' ),
+            span({ class: 'card-value' }, allocationId)
+          ) : "",
+          txid ? div({ class: 'card-field' },
+            span({ class: 'card-label' }, i18n.bankTx + ':' ),
+            a({ href: `https://ecoin.03c8.net/blockexplorer/search?q=${txid}`, target: '_blank' }, txid)
+          ) : ""
+        )
+      );
+    }
+
+    if (type === 'pixelia') {
+      const { author } = content;
+      cardBody.push(
+        div({ class: 'card-section pixelia' },
+          div({ class: 'card-field' },
+            a({ href: `/author/${encodeURIComponent(author)}`, class: 'activityVotePost' }, author)
+          )
+        )
+      );
+    }
+
+    if (type === 'tribe') {
+      const { title, image, description, location, tags, isLARP, inviteMode, isAnonymous, members } = content;
+      const validTags = Array.isArray(tags) ? tags : [];
+      cardBody.push(
+        div({ class: 'card-section tribe' },
+          h2({ class: 'tribe-title' },
+            a({ href: `/tribe/${encodeURIComponent(action.id)}`, class: "user-link" }, title)
+          ),
+           div({ style: 'display:flex; gap:.6em; flex-wrap:wrap;' },
+            location ? div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.tribeLocationLabel.toUpperCase()) + ':'), span({ class: 'card-value' }, ...renderUrl(location))) : "",
+            typeof isAnonymous === 'boolean' ? div({ class: 'card-field' }, span({ class: 'card-label' }, i18n.tribeIsAnonymousLabel+ ':'), span({ class: 'card-value' }, isAnonymous ? i18n.tribePrivate : i18n.tribePublic)) : "",
+            inviteMode ? div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.tribeModeLabel) + ':'), span({ class: 'card-value' }, inviteMode.toUpperCase())) : "",
+            typeof isLARP === 'boolean' ? div({ class: 'card-field' }, span({ class: 'card-label' }, i18n.tribeLARPLabel+ ':'), span({ class: 'card-value' }, isLARP ? i18n.tribeYes : i18n.tribeNo)) : ""
+         ), 
+          Array.isArray(members) ? h2(`${i18n.tribeMembersCount}: ${members.length}`) : "",
+          image  
+            ? renderMediaBlob(image, '/assets/images/default-tribe.png')
+            : img({ src: '/assets/images/default-tribe.png', class: 'feed-image tribe-image' }),
+          p({ class: 'tribe-description' }, ...renderUrl(description || '')),
+          validTags.length
+            ? div({ class: 'card-tags' }, validTags.map(tag =>
+              a({ href: `/search?query=%23${encodeURIComponent(tag)}`, class: "tag-link" }, `#${tag}`)))
+            : ""
+        )
+      );
+    }
+    if (type === 'tribeJoin' || type === 'tribeLeave') {
+      const { tribeId, tribeTitle } = content || {};
+      cardBody.push(
+        div({ class: 'card-section tribe' },
+          h2({ class: 'tribe-title' },
+            a({ href: `/tribe/${encodeURIComponent(tribeId || '')}`, class: 'user-link' }, tribeTitle || tribeId || '')
+          )
+        )
+      );
+    }
+
+    if (type === 'tribeFeedPost') {
+      const { tribeId, tribeTitle, text } = content || {};
+      cardBody.push(
+        div({ class: 'card-section tribe' },
+          h2({ class: 'tribe-title' },
+            a({ href: `/tribe/${encodeURIComponent(tribeId || '')}`, class: 'user-link' }, tribeTitle || tribeId || '')
+          ),
+          text ? p({ class: 'post-text' }, ...renderUrl(text)) : ''
+        )
+      );
+    }
+
+    if (type === 'tribeFeedRefeed') {
+      const { tribeId, tribeTitle, text } = content || {};
+      cardBody.push(
+        div({ class: 'card-section tribe' },
+          h2({ class: 'tribe-title' },
+            a({ href: `/tribe/${encodeURIComponent(tribeId || '')}`, class: 'user-link' }, tribeTitle || tribeId || '')
+          ),
+          text ? p({ class: 'post-text' }, ...renderUrl(text)) : ''
+        )
+      );
+    }
+
+    if (type === 'curriculum') {
+      const { author, name, description, photo, personalSkills, oasisSkills, educationalSkills, languages, professionalSkills, status, preferences, createdAt, updatedAt} = content;
+      cardBody.push(
+        div({ class: 'card-section curriculum' },
+          h2(a({ href: `/author/${encodeURIComponent(author)}`, class: "user-link" }, `@`, name)),
+          div(
+            { class: 'card-fields-container' },
+            createdAt ?
+              div(
+                { class: 'card-field' },
+                span({ class: 'card-label' }, i18n.cvCreatedAt + ':'),
+                span({ class: 'card-value' }, moment(createdAt).format('YYYY-MM-DD HH:mm:ss'))
+              )
+              : "",
+            updatedAt ?
+              div(
+                { class: 'card-field' },
+                span({ class: 'card-label' }, i18n.cvUpdatedAt + ':'),
+                span({ class: 'card-value' }, moment(updatedAt).format('YYYY-MM-DD HH:mm:ss'))
+              )
+              : ""
+          ),
+          status ? div({ class: 'card-field' }, span({ class: 'card-label' }, i18n.cvStatusLabel + ':'), span({ class: 'card-value' }, status)) : "",
+          preferences ? div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.cvPreferencesLabel || 'Preferences') + ':'), span({ class: 'card-value' }, preferences)) : "",
+          languages ? div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.cvLanguagesLabel || 'Languages') + ':'), span({ class: 'card-value' }, languages.toUpperCase())) : "",
+          photo ?
+            [
+              br(),
+              img({ class: "cv-photo", src: `/blob/${encodeURIComponent(photo)}` }),
+              br()
+            ]
+            : "",
+          p(...renderUrl(description || "")),
+          personalSkills && personalSkills.length
+            ? div({ class: 'card-tags' }, personalSkills.map(skill =>
+                a({ href: `/search?query=%23${encodeURIComponent(skill)}`, class: "tag-link" }, `#${skill}`)
+              )) : "",
+          oasisSkills && oasisSkills.length
+            ? div({ class: 'card-tags' }, oasisSkills.map(skill =>
+                a({ href: `/search?query=%23${encodeURIComponent(skill)}`, class: "tag-link" }, `#${skill}`)
+              )) : "",
+          educationalSkills && educationalSkills.length
+            ? div({ class: 'card-tags' }, educationalSkills.map(skill =>
+                a({ href: `/search?query=%23${encodeURIComponent(skill)}`, class: "tag-link" }, `#${skill}`)
+              )) : "",
+          professionalSkills && professionalSkills.length
+            ? div({ class: 'card-tags' }, professionalSkills.map(skill =>
+                a({ href: `/search?query=%23${encodeURIComponent(skill)}`, class: "tag-link" }, `#${skill}`)
+              )) : ""
+        )
+      );
+    }
+
+    if (type === 'image') {
+      const { url } = content;
+      cardBody.push(
+        div({ class: 'card-section image' },
+          img({ src: `/blob/${encodeURIComponent(url)}`, class: 'post-image' })
+        )
+      );
+    }
+
+    if (type === 'audio') {
+      const { url, mimeType, title } = content;
+      cardBody.push(
+        div({ class: 'card-section audio' },
+          title?.trim() ? h2({ class: 'audio-title' }, title) : "",
+          url
+            ? div({ class: "audio-container" },
+                audioHyperaxe({
+                  controls: true,
+                  src: `/blob/${encodeURIComponent(url)}`,
+                  type: mimeType
+                })
+              )
+            : p(i18n.audioNoFile)
+        )
+      );
+    }
+
+    if (type === 'video') {
+      const { url, mimeType, title } = content;
+      cardBody.push(
+        div({ class: 'card-section video' },
+          title?.trim() ? h2({ class: 'video-title' }, title) : "",
+          url
+            ? div({ class: "video-container" },
+                videoHyperaxe({
+                  controls: true,
+                  src: `/blob/${encodeURIComponent(url)}`,
+                  type: mimeType,
+                  preload: 'metadata',
+                  width: '640',
+                  height: '360'
+                })
+              )
+            : p(i18n.videoNoFile)
+        )
+      );
+    }
+
+    if (type === 'document') {
+      const { url, title, key } = content;
+      if (title && seenDocumentTitles.has(title.trim())) {
+        return null;
+      }
+      if (title) seenDocumentTitles.add(title.trim());
+      cardBody.push(
+        div({ class: 'card-section document' },
+          title?.trim() ? h2({ class: 'document-title' }, title) : "",
+          div({
+            id: `pdf-container-${key || url}`,
+            class: 'pdf-viewer-container',
+            'data-pdf-url': `/blob/${encodeURIComponent(url)}`
+          })
+        )
+      );
+    }
+
+    if (type === 'bookmark') {
+      const { url } = content;
+      cardBody.push(
+        div({ class: 'card-section bookmark' },
+          h2(url ? p(a({ href: url, target: '_blank', class: "bookmark-url" }, url)) : "")
+        )
+      );
+    }
+
+    if (type === 'event') {
+      const { title, description, date, location, price, attendees, organizer, isPublic } = content;
+      cardBody.push(
+        div({ class: 'card-section event' },
+          div({ class: 'card-field' }, span({ class: 'card-label' }, i18n.title + ':'), span({ class: 'card-value' }, title)),
+          date ? div({ class: 'card-field' }, span({ class: 'card-label' }, i18n.date + ':'), span({ class: 'card-value' }, new Date(date).toLocaleString())) : "",
+          location ? div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.location || 'Location') + ':'), span({ class: 'card-value' }, location)) : "",
+          typeof isPublic === 'boolean' ? div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.isPublic || 'Public') + ':'), span({ class: 'card-value' }, isPublic ? 'Yes' : 'No')) : "",
+          price ? div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.price || 'Price') + ':'), span({ class: 'card-value' }, price + " ECO")) : "",
+          br(),
+          organizer ? div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.organizer || 'Organizer') + ': '), a({ class: "user-link", href: `/author/${encodeURIComponent(organizer)}` }, organizer)) : "",
+          Array.isArray(attendees) ? h2({ class: 'card-label' }, (i18n.attendees || 'Attendees') + ': ' + attendees.length) : ""
+        )
+      );
+    }
+
+    if (type === 'task') {
+      const { title, startTime, endTime, priority, status, author } = content;
+      cardBody.push(
+        div({ class: 'card-section task' },
+          div({ class: 'card-field' }, span({ class: 'card-label' }, i18n.title + ':'), span({ class: 'card-value' }, title)),
+          priority ? div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.priority || 'Priority') + ':'), span({ class: 'card-value' }, priority)) : "",
+          startTime ? div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.taskStartTimeLabel || 'Start') + ':'), span({ class: 'card-value' }, new Date(startTime).toLocaleString())) : "",
+          endTime ? div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.taskEndTimeLabel || 'End') + ':'), span({ class: 'card-value' }, new Date(endTime).toLocaleString())) : "",
+          status ? div({ class: 'card-field' }, span({ class: 'card-label' }, i18n.status + ':'), span({ class: 'card-value' }, status)) : ""
+        )
+      );
+    }
+    
+    if (type === 'taskAssignment') {
+        const { title, added, removed } = content || {};
+        const addList = Array.isArray(added) ? added : [];
+        const remList = Array.isArray(removed) ? removed : [];
+        const renderUserList = (ids) =>
+            ids.map((id, i) => [i > 0 ? ', ' : '', a({ class: 'user-link', href: `/author/${encodeURIComponent(id)}` }, id)]).flat();
+        cardBody.push(
+            div({ class: 'card-section task' },
+                div({ class: 'card-field' },
+                    span({ class: 'card-label' }, i18n.title + ':'),
+                    span({ class: 'card-value' }, title || '')
+                ),
+                addList.length
+                    ? div({ class: 'card-field' },
+                        span({ class: 'card-label' }, (i18n.taskAssignedTo || 'Assigned to') + ':'),
+                        span({ class: 'card-value' }, ...renderUserList(addList))
+                    )
+                    : '',
+                remList.length
+                    ? div({ class: 'card-field' },
+                        span({ class: 'card-label' }, (i18n.taskUnassignedFrom || 'Unassigned from') + ':'),
+                        span({ class: 'card-value' }, ...renderUserList(remList))
+                    )
+                    : ''
+            )
+        );
+    }
+
+    if (type === 'feed') {
+      const { renderTextWithStyles } = require('../backend/renderTextWithStyles');
+      const { text, refeeds } = content;
+      if (!isValidFeedText(text)) return null;
+      const safeText = cleanFeedText(text);
+      const htmlText = safeText ? rewriteHashtagLinks(renderTextWithStyles(safeText)) : '';
+      const refeedsNum = Number(refeeds || 0) || 0;
+      cardBody.push(
+        div({ class: 'card-section feed' },
+          div({ class: 'feed-text', innerHTML: sanitizeHtml(htmlText) }),
+          refeedsNum > 0
+            ? h2({ class: 'card-field' },
+                span({ class: 'card-label' }, i18n.tribeFeedRefeeds + ': '),
+                span({ class: 'card-label' }, String(refeedsNum))
+              )
+            : null
+        )
+      );
+    }
+
+  if (type === 'post') {
+      const { contentWarning, text } = content || {};
+      const rawText = text || '';
+      const POST_TRUNCATE_LEN = 300;
+      const isTruncated = rawText.length > POST_TRUNCATE_LEN;
+      const displayText = isTruncated ? rawText.slice(0, POST_TRUNCATE_LEN) + '…' : rawText;
+      const isHtml = typeof displayText === 'string' && /<\/?[a-z][\s\S]*>/i.test(displayText);
+      let bodyNode;
+      if (isHtml) {
+        const hasAnchor = /<a\b[^>]*>/i.test(displayText);
+        const linkified = hasAnchor
+          ? displayText
+          : displayText.replace(
+              /(https?:\/\/[^\s<]+)/g,
+              (url) =>
+                `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`
+            );
+       bodyNode = div({ class: 'post-text', style: 'max-height:180px;overflow:hidden;', innerHTML: sanitizeHtml(linkified) });
+      } else {
+        bodyNode = p({ class: 'post-text post-text-pre', style: 'max-height:180px;overflow:hidden;' }, ...renderUrlPreserveNewlines(displayText));
+      }
+      const threadId = getThreadIdFromPost(action);
+      const replyToId = getReplyToIdFromPost(action, byIdAll);
+      const isReply = !!(threadId && threadId !== action.id);
+      const ctxHref = isReply ? `/thread/${encodeURIComponent(threadId)}#${encodeURIComponent(replyToId || threadId)}` : '';
+      const parent = isReply ? (byIdAll.get(replyToId) || byIdAll.get(threadId)) : null;
+      const parentContent = parent ? (parent.value?.content || parent.content || {}) : {};
+      const parentAuthor = parent?.author || '';
+      const parentName = parent?.authorName || parentAuthor;
+      const parentText = parent ? excerptPostText(parentContent, 220) : '';
+      cardBody.push(
+        div({ class: 'card-section post' },
+          isReply
+            ? div(
+                { class: 'reply-context', style: 'border-left:3px solid #666;padding-left:10px;margin-bottom:8px;opacity:0.85;' },
+                span({ style: 'font-size:0.85em;' },
+                  a({ href: ctxHref, class: 'tag-link' }, i18n.inReplyTo || 'IN REPLY TO'),
+                  parentAuthor ? span(' ', a({ href: `/author/${encodeURIComponent(parentAuthor)}`, class: 'user-link', style: 'font-weight:bold;' }, parentName)) : ''
+                ),
+                parentText ? p({ class: 'post-text reply-context-text post-text-pre', style: 'font-size:0.85em;max-height:80px;overflow:hidden;margin-top:4px;' }, ...renderUrlPreserveNewlines(parentText)) : ''
+              )
+            : '',
+          contentWarning ? h2({ class: 'content-warning' }, contentWarning) : '',
+          bodyNode,
+          isTruncated && threadId
+            ? div({ style: 'margin-top:6px;' },
+                a({ href: `/thread/${encodeURIComponent(threadId)}#${encodeURIComponent(action.id || threadId)}`, class: 'filter-btn' }, i18n.keepReading || 'Keep reading...')
+              )
+            : ''
+        )
+      );
+    }
+
+    if (type === 'postThread') {
+        const c = action.content || {};
+        const threadId = c.threadId;
+        const href = `/thread/${encodeURIComponent(threadId)}#${encodeURIComponent(threadId)}`;
+        const root = c.root;
+        const replies = Array.isArray(c.replies) ? c.replies : [];
+        const repliesAsc = replies.slice().sort((a, b) => (a.ts || 0) - (b.ts || 0));
+        const limit = 5;
+        const overflow = repliesAsc.length > limit;
+        const show = repliesAsc.slice(Math.max(0, repliesAsc.length - limit));
+        const lastId = repliesAsc.length ? repliesAsc[repliesAsc.length - 1].id : threadId;
+        const viewMoreHref = `/thread/${encodeURIComponent(threadId)}#${encodeURIComponent(lastId)}`;
+        return div({ class: 'card card-rpg post-thread' },
+            div({ class: 'card-header' },
+                h2({ class: 'card-label' }, `[${String(i18n.typePost || 'POST').toUpperCase()} · THREAD]`),
+                form({ method: 'GET', action: href },
+                    button({ type: 'submit', class: 'filter-btn' }, i18n.viewDetails)
+                )
+            ),
+            div({ class: 'card-body' },
+		root && root.text
+		    ? div({ class: 'card-section' },
+			p({ class: 'post-text', style: 'white-space:pre-wrap;' }, ...renderUrlPreserveNewlines(root.text))
+		    )
+		    : '',
+		div({ class: 'card-section' },
+		show.map(r => {
+		    const commentHref = `/thread/${encodeURIComponent(threadId)}#${encodeURIComponent(r.id)}`;
+		    const rDate = r.ts ? new Date(r.ts).toLocaleString() : '';
+		    return div({ class: 'thread-reply-item' },
+			div({ class: 'thread-reply' },
+			    r.text ? p({ class: 'post-text', style: 'white-space:pre-wrap;' }, ...renderUrlPreserveNewlines(r.text)) : ''
+			),
+			div({ class: 'card-footer thread-reply-footer' },
+			    span({ class: 'date-link' }, rDate),
+			    a({ href: `/author/${encodeURIComponent(r.author)}`, class: 'user-link' }, `${r.author}`),
+			    form({ method: 'GET', action: commentHref, class: 'inline-form' },
+				button({ type: 'submit', class: 'filter-btn' }, i18n.viewDetails)
+			    )
+			)
+		    );
+		}),
+            )
+        ),
+        p({ class: 'card-footer' },
+            span({ class: 'date-link' }, `${action.ts ? new Date(action.ts).toLocaleString() : ''} ${i18n.performed} `),
+            a({ href: `/author/${encodeURIComponent(action.author)}`, class: 'user-link' }, `${action.author}`)
+        )
+        );
+    }
+
+    if (type === 'forum') {
+      const { root, category, title, text, key, rootTitle, rootKey } = content;
+      if (!root) {
+        const linkKey = key || action.id;
+        const linkText = (title && String(title).trim()) ? title : '';
+        cardBody.push(
+          div({ class: 'card-section forum' },
+            div({ class: 'card-field', style: "font-size:1.12em; margin-bottom:5px;" },
+              span({ class: 'card-label', style: "font-weight:800;color:#ff9800;" }, i18n.title + ': '),
+              a({ href: `/forum/${encodeURIComponent(linkKey)}`, style: "font-weight:800;color:#4fc3f7;" }, linkText)
+            )
+          )
+        );
+      } else {
+        const rootId = typeof root === 'string' ? root : (root?.key || root?.id || '');
+        const parentForum = byIdAll.get(rootId) || actions.find(a => a.type === 'forum' && !a.content?.root && (a.id === rootId || a.content?.key === rootId));
+        const parentContent = parentForum ? (parentForum.value?.content || parentForum.content || {}) : {};
+        const parentTitle = (parentContent?.title && String(parentContent.title).trim()) ? parentContent.title : ((rootTitle && String(rootTitle).trim()) ? rootTitle : '');
+        const parentAuthor = parentForum?.author || '';
+        const parentName = parentForum?.authorName || parentAuthor;
+        const hrefKey = rootKey || rootId;
+        cardBody.push(
+          div({ class: 'card-section forum' },
+            div(
+              { class: 'reply-context', style: 'border-left:3px solid #666;padding-left:10px;margin-bottom:8px;opacity:0.85;' },
+              span({ style: 'font-size:0.85em;' },
+                a({ href: `/forum/${encodeURIComponent(hrefKey)}`, class: 'tag-link' }, i18n.inReplyTo || 'IN REPLY TO'),
+                parentAuthor ? span(' ', a({ href: `/author/${encodeURIComponent(parentAuthor)}`, class: 'user-link', style: 'font-weight:bold;' }, parentName)) : ''
+              ),
+              parentTitle ? p({ class: 'post-text reply-context-text', style: 'font-size:0.85em;max-height:60px;overflow:hidden;margin-top:4px;font-weight:bold;color:#4fc3f7;' }, parentTitle) : ''
+            ),
+            div({ class: 'card-field', style: 'margin-bottom:12px;' },
+              p({ style: "margin:0 0 8px 0; word-break:break-all;" }, ...renderUrl(text))
+            )
+          )
+        );
+      }
+    }
+
+ if (type === 'spread') {
+  const link = normalizeSpreadLink(content?.spreadTargetId || content?.vote?.link || '');
+  const target = link ? (byIdAll.get(link) || byIdAll.get(decodeMaybe(link)) || byIdAll.get(encodeURIComponent(link))) : null;
+  const tContent = target ? (target.value?.content || target.content || {}) : {};
+  const spreadTitle =
+    (typeof content?.spreadTitle === 'string' && content.spreadTitle.trim())
+      ? content.spreadTitle.trim()
+      : (typeof tContent?.title === 'string' && tContent.title.trim())
+        ? tContent.title.trim()
+        : (typeof tContent?.name === 'string' && tContent.name.trim())
+          ? tContent.name.trim()
+          : '';
+  const spreadContentWarning =
+    (typeof content?.spreadContentWarning === 'string' && content.spreadContentWarning.trim())
+      ? content.spreadContentWarning.trim()
+      : (typeof tContent?.contentWarning === 'string' && tContent.contentWarning.trim())
+        ? tContent.contentWarning.trim()
+        : '';
+  const spreadText =
+    (typeof content?.spreadText === 'string' && content.spreadText.trim())
+      ? content.spreadText.trim()
+      : excerptPostText(tContent, 700);
+  const spreadOriginalAuthor =
+    (typeof content?.spreadOriginalAuthor === 'string' && content.spreadOriginalAuthor.trim())
+      ? content.spreadOriginalAuthor.trim()
+      : (target?.author || '');
+  const ord = spreadOrdinalById.get(safeMsgId(action)) || 0;
+  const totalChron = link && spreadsByLink.has(link) ? spreadsByLink.get(link).length : 0;
+  const label = (i18n.spreadChron || 'Spread') + ':';
+  const value = ord && totalChron ? `${ord}/${totalChron}` : (ord ? String(ord) : '');
+  const spreadExcerpt = spreadText || excerptPostText(content, 300);
+  cardBody.push(
+    div({ class: 'card-section vote' },
+      spreadTitle ? h2({ class: 'post-title activity-spread-title' }, spreadTitle) : '',
+      spreadContentWarning ? h2({ class: 'content-warning' }, spreadContentWarning) : '',
+      spreadExcerpt
+        ? div({ class: 'post-text activity-spread-text post-text-pre', style: 'max-height:200px;overflow:hidden;' }, ...renderUrlPreserveNewlines(spreadExcerpt))
+        : div({ class: 'post-text activity-spread-text', style: 'opacity:0.6;font-style:italic;' }, i18n.spreadContentUnavailable || 'Content not yet available (pending replication)'),
+      spreadOriginalAuthor
+        ? div({ class: 'card-field' },
+            span({ class: 'card-label' }, (i18n.spreadBy || 'By') + ': '),
+            span({ class: 'card-value' }, a({ href: `/author/${encodeURIComponent(spreadOriginalAuthor)}`, class: 'user-link' }, spreadOriginalAuthor))
+          )
+        : '',
+      value
+        ? div({ class: 'card-field' },
+            span({ class: 'card-label' }, label),
+            span({ class: 'card-value' }, value)
+          )
+        : '',
+      link
+        ? div({ style: 'margin-top:6px;' },
+            a({ href: `/thread/${encodeURIComponent(link)}#${encodeURIComponent(link)}`, class: 'filter-btn' }, i18n.viewDetails || 'View details')
+          )
+        : ''
+    )
+  );
+}
+
+    if (type === 'vote') {
+      const { vote } = content;
+      cardBody.push(
+        div({ class: 'card-section vote' },
+          p(
+            a({ href: `/thread/${encodeURIComponent(vote.link)}#${encodeURIComponent(vote.link)}`, class: 'activityVotePost' }, vote.link)
+          )
+        )
+      );
+    }
+
+    if (type === 'about') {
+      const { about, name, image } = content;
+      cardBody.push(
+        div({ class: 'card-section about' },
+          h2(a({ href: `/author/${encodeURIComponent(about)}`, class: "user-link" }, `@`, name)),
+          image
+            ? img({ src: `/blob/${encodeURIComponent(image)}`, alt: name, class: 'activity-avatar' })
+            : img({ src: '/assets/images/default-avatar.png', alt: name, class: 'activity-avatar' })
+        )
+      );
+    }
+
+    if (type === 'contact') {
+      const { contact } = content || {};
+      const aId = action.author || '';
+      const bId = contact || '';
+      const pa = getProfile(aId);
+      const pb = getProfile(bId);
+      const srcA = pa.image ? `/blob/${encodeURIComponent(pa.image)}` : '/assets/images/default-avatar.png';
+      const srcB = pb.image ? `/blob/${encodeURIComponent(pb.image)}` : '/assets/images/default-avatar.png';
+      cardBody.push(
+        div({ class: 'card-section contact' },
+          div({ class: 'activity-contact' },
+            a({ href: `/author/${encodeURIComponent(aId)}`, class: 'activity-contact-avatar-link' },
+              img({ src: srcA, alt: pa.name || pa.id, class: 'activity-contact-avatar' })
+            ),
+            span({ class: 'activity-contact-arrow' }, ''),
+            a({ href: `/author/${encodeURIComponent(bId)}`, class: 'activity-contact-avatar-link' },
+              img({ src: srcB, alt: pb.name || pb.id, class: 'activity-contact-avatar' })
+            )
+          )
+        )
+      );
+    }
+
+    if (type === 'pub') {
+      const { address } = content || {};
+      const { key } = address || {};
+      const pr = getProfile(key || '');
+      const src = pr.image ? `/blob/${encodeURIComponent(pr.image)}` : '/assets/images/default-avatar.png';
+      cardBody.push(
+        div({ class: 'card-section pub activity-pub' },
+          br(),
+          a({ href: `/author/${encodeURIComponent(pr.id)}`, class: 'user-link' }, pr.name || pr.id),
+          br(),
+          img({ src, alt: pr.name || pr.id, class: 'activity-avatar' })
+        )
+     );
+    }
+
+    if (type === 'market') {
+      const { item_type, title, price, status, deadline, stock, image, auctions_poll, seller } = content;
+      const isSeller = seller && userId && seller === userId;
+      cardBody.push(
+        div({ class: 'card-section market' },
+          div({ class: 'card-field' }, span({ class: 'card-label' }, i18n.marketItemTitle + ':'), span({ class: 'card-value' }, title)),
+          div({ class: 'card-field' }, span({ class: 'card-label' }, i18n.marketItemType + ':'), span({ class: 'card-value' }, item_type.toUpperCase())),
+          div({ class: 'card-field' }, span({ class: 'card-label' }, i18n.marketItemStatus + ": " ), span({ class: 'card-value' }, status.toUpperCase())),
+          div({ class: 'card-field' }, span({ class: 'card-label' }, i18n.deadline + ':'), span({ class: 'card-value' }, deadline ? new Date(deadline).toLocaleString() : "")),
+          div({ class: 'card-field' }, span({ class: 'card-label' }, i18n.marketItemStock + ':'), span({ class: 'card-value' }, stock)),
+          br(),
+          image
+            ? renderMediaBlob(image, '/assets/images/default-market.png')
+            : img({ src: '/assets/images/default-market.png', alt: title }),
+          br(),
+          div({ class: "market-card price" },
+            p(`${i18n.marketItemPrice}: ${price} ECO`)
+          ),
+          item_type === 'auction' && status !== 'SOLD' && status !== 'DISCARDED' && !isSeller
+            ? div({ class: "auction-info" },
+                auctions_poll && auctions_poll.length > 0
+                  ?
+                      table({ class: 'auction-bid-table' },
+                        tr(
+                          th(i18n.marketAuctionBidTime),
+                          th(i18n.marketAuctionUser),
+                          th(i18n.marketAuctionBidAmount)
+                        ),
+                        ...(auctions_poll || []).map(bid => {
+                          const [bidderId, bidAmount, bidTime] = bid.split(':');
+                          return tr(
+                            td(moment(bidTime).format('YYYY-MM-DD HH:mm:ss')),
+                            td(a({ href: `/author/${encodeURIComponent(userId)}` }, userId)),
+                            td(`${parseFloat(bidAmount).toFixed(6)} ECO`)
+                          );
+                        })
+                      )
+                  : p(i18n.marketNoBids),
+                form({ method: "POST", action: `/market/bid/${encodeURIComponent(action.id)}` },
+                  input({ type: "number", name: "bidAmount", step: "0.000001", min: "0.000001", placeholder: i18n.marketYourBid, required: true }),
+                  br(),
+                  button({ class: "buy-btn", type: "submit" }, i18n.marketPlaceBidButton)
+                )
+              ) : "",
+          item_type === 'exchange' && status !== 'SOLD' && status !== 'DISCARDED' && !isSeller
+            ? form({ method: "POST", action: `/market/buy/${encodeURIComponent(action.id)}` },
+                button({ class: "buy-btn", type: "submit" }, i18n.marketActionsBuy)
+              ) : ""
+        )
+      );
+    }
+
+    if (type === 'report') {
+      const { title, confirmations, severity, status } = content;
+      cardBody.push(
+        div({ class: 'card-section report' },
+          div({ class: 'card-field' }, span({ class: 'card-label' }, i18n.title + ':'), span({ class: 'card-value' }, title)),
+          status ? div({ class: 'card-field' }, span({ class: 'card-label' }, i18n.status + ':'), span({ class: 'card-value' }, status)) : "",
+          severity ? div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.severity || 'Severity') + ':'), span({ class: 'card-value' }, severity.toUpperCase())) : "",
+          Array.isArray(confirmations) ? h2({ class: 'card-label' }, (i18n.transfersConfirmations) + ': ' + confirmations.length) : ""
+        )
+      );
+    }
+
+    if (type === 'project') {
+      const {
+        title, status, progress, goal, pledged,
+        deadline, followers, backers, milestones,
+        bounty, bountyAmount, bounty_currency,
+        activity, activityActor
+      } = content;
+
+      const ratio = goal ? Math.min(100, Math.round((parseFloat(pledged || 0) / parseFloat(goal)) * 100)) : 0;
+      const displayStatus = String(status || 'ACTIVE').toUpperCase();
+      const followersCount = Array.isArray(followers) ? followers.length : 0;
+      const backersCount = Array.isArray(backers) ? backers.length : 0;
+      const backersTotal = sumAmounts(backers || []);
+      const msCount = Array.isArray(milestones) ? milestones.length : 0;
+      const lastMs = Array.isArray(milestones) && milestones.length ? milestones[milestones.length - 1] : null;
+      const bountyVal = typeof bountyAmount !== 'undefined'
+        ? bountyAmount
+        : (typeof bounty === 'number' ? bounty : null);
+
+      if (activity && activity.kind) {
+        const tmpl =
+          activity.kind === 'follow'
+            ? (i18n.activityProjectFollow || '%OASIS% is now %ACTION% this project: %PROJECT%')
+            : activity.kind === 'unfollow'
+              ? (i18n.activityProjectUnfollow || '%OASIS% is now %ACTION% this project: %PROJECT%')
+              : '%OASIS% performed an unknown action on %PROJECT%';
+
+        const actionWord =
+          activity.kind === 'follow'
+            ? (i18n.following || 'FOLLOWING')
+            : activity.kind === 'unfollow'
+              ? (i18n.unfollowing || 'UNFOLLOWING')
+              : 'ACTION';
+
+        const msgHtml = tmpl
+          .replace('%OASIS%', `<a class="user-link" href="/author/${encodeURIComponent(activity.activityActor || '')}">${activity.activityActor || ''}</a>`)
+          .replace('%PROJECT%', `<a class="user-link" href="/projects/${encodeURIComponent(action.tipId || action.id)}">${title || ''}</a>`)
+          .replace('%ACTION%', `<strong>${actionWord}</strong>`);
+
+        return div({ class: 'card card-rpg' },
+          div({ class: 'card-header' },
+            h2({ class: 'card-label' }, `[${(i18n.typeProject || 'PROJECT').toUpperCase()}]`),
+            form({ method: "GET", action: `/projects/${encodeURIComponent(action.tipId || action.id)}` },
+              button({ type: "submit", class: "filter-btn" }, i18n.viewDetails)
+            )
+          ),
+          div(
+            p({ innerHTML: sanitizeHtml(msgHtml) })
+          ),
+          p({ class: 'card-footer' },
+            span({ class: 'date-link' }, `${action.ts ? new Date(action.ts).toLocaleString() : ''} ${i18n.performed} `),
+            a({ href: `/author/${encodeURIComponent(action.author)}`, class: 'user-link' }, `${action.author}`)
+          )
+        );
+      }
+
+      cardBody.push(
+        div({ class: 'card-section project' },
+          title ? div({ class: 'card-field' },
+            span({ class: 'card-label' }, i18n.title + ':'),
+            span({ class: 'card-value' }, title)
+          ) : "",
+          typeof goal !== 'undefined' ? div({ class: 'card-field' },
+            span({ class: 'card-label' }, i18n.projectGoal + ':'),
+            span({ class: 'card-value' }, `${goal} ECO`)
+          ) : "",
+          typeof progress !== 'undefined' ? div({ class: 'card-field' },
+            span({ class: 'card-label' }, i18n.projectProgress + ':'),
+            span({ class: 'card-value' }, `${progress || 0}%`)
+          ) : "",
+          deadline ? div({ class: 'card-field' },
+            span({ class: 'card-label' }, i18n.projectDeadline + ':'),
+            span({ class: 'card-value' }, moment(deadline).format('YYYY/MM/DD HH:mm'))
+          ) : "",
+          div({ class: 'card-field' },
+            span({ class: 'card-label' }, i18n.projectStatus + ':'),
+            span({ class: 'card-value' }, i18n['projectStatus' + displayStatus] || displayStatus)
+          ),
+          div({ class: 'card-field' },
+            span({ class: 'card-label' }, i18n.projectFunding + ':'),
+            span({ class: 'card-value' }, `${ratio}%`)
+          ),
+          typeof pledged !== 'undefined' ? div({ class: 'card-field' },
+            span({ class: 'card-label' }, i18n.projectPledged + ':'),
+            span({ class: 'card-value' }, `${pledged || 0} ECO`)
+          ) : "",
+          div({ class: 'card-field' },
+            span({ class: 'card-label' }, i18n.projectFollowers + ':'),
+            span({ class: 'card-value' }, `${followersCount}`)
+          ),
+          div({ class: 'card-field' },
+            span({ class: 'card-label' }, i18n.projectBackers + ':'),
+            span({ class: 'card-value' }, `${backersCount} · ${backersTotal} ECO`)
+          ),
+          msCount ? div({ class: 'card-field' },
+            span({ class: 'card-label' }, (i18n.projectMilestones || 'Milestones') + ':'),
+            span({ class: 'card-value' }, `${msCount}${lastMs && lastMs.title ? ' · ' + lastMs.title : ''}`)
+          ) : "",
+          bountyVal != null ? div({ class: 'card-field' },
+            span({ class: 'card-label' }, (i18n.projectBounty || 'Bounty') + ':'),
+            span({ class: 'card-value' }, `${bountyVal} ${(bounty_currency || 'ECO').toUpperCase()}`)
+          ) : ""
+        )
+      );
+    }
+      
+    if (type === 'aiExchange') {
+      const { ctx } = content;
+      cardBody.push(
+        div({ class: 'card-section ai-exchange' },
+          Array.isArray(ctx) && ctx.length
+            ? div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.aiSnippetsLearned || 'Snippets learned') + ':'), span({ class: 'card-value' }, String(ctx.length)))
+            : ""
+        )
+      );
+    }
+
+    if (type === 'karmaScore') {
+      const { karmaScore } = content;
+      cardBody.push(
+        div({ class: 'card-section ai-exchange' },
+          div({ class: 'card-field' },
+            span({ class: 'card-label' }, i18n.bankingUserEngagementScore + ':'),
+            span({ class: 'card-value' }, karmaScore)
+          )
+        )
+      );
+    }
+
+    if (type === 'job') {
+      const { title, job_type, tasks, location, vacants, salary, status, subscribers } = content;
+      cardBody.push(
+        div({ class: 'card-section report' },
+          div({ class: 'card-field' },
+            span({ class: 'card-label' }, i18n.title + ':'),
+            span({ class: 'card-value' }, title)
+          ),
+          salary && div({ class: 'card-field' },
+            span({ class: 'card-label' }, i18n.jobSalary + ':'),
+            span({ class: 'card-value' }, salary + ' ECO')
+          ),
+          status && div({ class: 'card-field' },
+            span({ class: 'card-label' }, i18n.jobStatus + ':'),
+            span({ class: 'card-value' }, status.toUpperCase())
+          ),
+          job_type && div({ class: 'card-field' },
+            span({ class: 'card-label' }, i18n.jobType + ':'),
+            span({ class: 'card-value' }, job_type.toUpperCase())
+          ),
+          location && div({ class: 'card-field' },
+            span({ class: 'card-label' }, i18n.jobLocation + ':'),
+            span({ class: 'card-value' }, location.toUpperCase())
+          ),
+          vacants && div({ class: 'card-field' },
+            span({ class: 'card-label' }, i18n.jobVacants + ':'),
+            span({ class: 'card-value' }, vacants)
+          ),
+          div({ class: 'card-field' },
+            span({ class: 'card-label' }, i18n.jobSubscribers + ':'),
+            span({ class: 'card-value' },
+              Array.isArray(subscribers) && subscribers.length > 0
+                ? `${subscribers.length}`
+                : i18n.noSubscribers.toUpperCase()
+            )
+          )
+        )
+      );
+    }
+
+    if (type === 'parliamentCandidature') {
+      const { targetType, targetId, targetTitle, method, votes, proposer } = content;
+      const link = targetType === 'tribe'
+        ? a({ href: `/tribe/${encodeURIComponent(targetId)}`, class: 'user-link' }, targetTitle || targetId)
+        : a({ href: `/author/${encodeURIComponent(targetId)}`, class: 'user-link' }, targetId);
+
+      const methodUpper = String(
+        i18n['parliamentMethod' + String(method || '').toUpperCase()] || method
+      ).toUpperCase();
+
+      cardBody.push(
+        div({ class: 'card-section parliament' },
+          div({ class: 'card-field' }, span({ class: 'card-label' }, (String(i18n.parliamentCandidatureId || 'Candidature').toUpperCase()) + ':'), span({ class: 'card-value' }, link)),
+          div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.parliamentGovMethod || 'METHOD') + ':'), span({ class: 'card-value' }, methodUpper)),
+          typeof votes !== 'undefined'
+            ? div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.parliamentVotesReceived || 'VOTES RECEIVED') + ':'), span({ class: 'card-value' }, String(votes)))
+            : ''
+        )
+      );
+    }
+
+    if (type === 'parliamentTerm') {
+      const { method, powerType, powerId, powerTitle, winnerVotes, totalVotes, startAt, endAt } = content;
+      const powerTypeNorm = String(powerType || '').toLowerCase();
+      const winnerLink =
+        powerTypeNorm === 'tribe'
+          ? a({ href: `/tribe/${encodeURIComponent(powerId)}`, class: 'user-link' }, powerTitle || powerId)
+          : powerTypeNorm === 'none' || !powerTypeNorm
+            ? a({ href: `/parliament?filter=government`, class: 'user-link' }, (i18n.parliamentAnarchy || 'ANARCHY'))
+            : a({ href: `/author/${encodeURIComponent(powerId)}`, class: 'user-link' }, powerTitle || powerId);
+
+      const methodUpper = String(
+        i18n['parliamentMethod' + String(method || '').toUpperCase()] || method
+      ).toUpperCase();
+
+      cardBody.push(
+        div({ class: 'card-section parliament' },
+          startAt ? div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.parliamentElectionsStart.toUpperCase() || 'Elections start') + ':'), span({ class: 'card-value' }, new Date(startAt).toLocaleString())) : '',
+          endAt ? div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.parliamentElectionsEnd.toUpperCase() || 'Elections end') + ':'), span({ class: 'card-value' }, new Date(endAt).toLocaleString())) : '',
+          div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.parliamentCurrentLeader.toUpperCase() || 'Winning candidature') + ':'), span({ class: 'card-value' }, winnerLink)),
+          div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.parliamentGovMethod.toUpperCase() || 'Method') + ':'), span({ class: 'card-value' }, methodUpper)),
+          div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.parliamentVotesReceived.toUpperCase() || 'Votes received') + ':'), span({ class: 'card-value' }, `${Number(winnerVotes || 0)} (${Number(totalVotes || 0)})`))
+        )
+      );
+    }
+
+    if (type === 'parliamentProposal') {
+      const { title, description, method, status, voteId, createdAt } = content;
+
+      const methodUpper = String(
+        i18n['parliamentMethod' + String(method || '').toUpperCase()] || method
+      ).toUpperCase();
+
+      cardBody.push(
+        div({ class: 'card-section parliament' },
+          title ? div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.parliamentProposalTitle.toUpperCase() || 'Title') + ':'), span({ class: 'card-value' }, title)) : '',
+          description ? p({ style: 'margin:.4rem 0' }, description) : '',
+          div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.parliamentGovMethod || 'Method') + ':'), span({ class: 'card-value' }, methodUpper)),
+          createdAt ? div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.createdAt.toUpperCase() || 'Created at') + ':'), span({ class: 'card-value' }, new Date(createdAt).toLocaleString())) : '',
+          voteId ? div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.parliamentOpenVote.toUpperCase() || 'Open vote') + ':'), a({ href: `/votes/${encodeURIComponent(voteId)}`, class: 'tag-link' }, i18n.viewDetails || 'View details')) : '',
+          status ? div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.parliamentStatus.toUpperCase() || 'Status') + ':'), span({ class: 'card-value' }, status)) : ''
+        )
+      );
+    }
+    
+    if (type === 'parliamentRevocation') {
+      const { title, reasons, method, status, voteId, createdAt } = content;
+      const methodUpper = String(
+        i18n['parliamentMethod' + String(method || '').toUpperCase()] || method
+      ).toUpperCase();
+
+      cardBody.push(
+        div({ class: 'card-section parliament' },
+          title ? div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.parliamentProposalTitle.toUpperCase() || 'Title') + ':'), span({ class: 'card-value' }, title)) : '',
+          reasons ? p({ style: 'margin:.4rem 0' }, reasons) : '',
+          div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.parliamentGovMethod || 'Method') + ':'), span({ class: 'card-value' }, methodUpper)),
+          createdAt ? div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.createdAt.toUpperCase() || 'Created at') + ':'), span({ class: 'card-value' }, new Date(createdAt).toLocaleString())) : '',
+          voteId ? div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.parliamentOpenVote.toUpperCase() || 'Open vote') + ':'), a({ href: `/votes/${encodeURIComponent(voteId)}`, class: 'tag-link' }, i18n.viewDetails || 'View details')) : '',
+          status ? div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.parliamentStatus.toUpperCase() || 'Status') + ':'), span({ class: 'card-value' }, status)) : ''
+        )
+      );
+    }
+
+    if (type === 'parliamentLaw') {
+      const { question, description, method, proposer, enactedAt, votes } = content;
+      const yes = Number(votes?.YES || 0);
+      const total = Number(votes?.total || votes?.TOTAL || 0);
+
+      const methodUpper = String(
+        i18n['parliamentMethod' + String(method || '').toUpperCase()] || method
+      ).toUpperCase();
+
+      cardBody.push(
+        div({ class: 'card-section parliament' },
+          question ? div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.parliamentLawQuestion || 'Question') + ':'), span({ class: 'card-value' }, question)) : '',
+          description ? p({ style: 'margin:.4rem 0' }, description) : '',
+          div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.parliamentLawMethod || 'Method') + ':'), span({ class: 'card-value' }, methodUpper)),
+          proposer ? div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.parliamentLawProposer || 'Proposer') + ':'), span({ class: 'card-value' }, a({ href: `/author/${encodeURIComponent(proposer)}`, class: 'user-link' }, proposer))) : '',
+          enactedAt ? div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.parliamentLawEnacted || 'Enacted at') + ':'), span({ class: 'card-value' }, new Date(enactedAt).toLocaleString())) : '',
+          (total || yes) ? div({ class: 'card-field' }, span({ class: 'card-label' }, (i18n.parliamentLawVotes || 'Votes') + ':'), span({ class: 'card-value' }, `${yes}/${total}`)) : ''
+        )
+      );
+    }
+
+    if (type.startsWith('courts')) {
+      if (type === 'courtsCase') {
+        const { title, method, accuser, status, answerBy, evidenceBy, decisionBy, needed, yes, total, voteId } = content;
+        cardBody.push(
+          div({ class: 'card-section courts' },
+            title ? div({ class: 'card-field' }, span({ class: 'card-label' }, i18n.courtsCaseTitle.toUpperCase() + ':'), span({ class: 'card-value' }, title)) : '',
+            status ? div({ class: 'card-field' }, span({ class: 'card-label' }, i18n.courtsThStatus.toUpperCase() + ':'), span({ class: 'card-value' }, status)) : '',
+            method ? div({ class: 'card-field' }, span({ class: 'card-label' }, i18n.courtsMethod.toUpperCase() + ':'), span({ class: 'card-value' }, String(i18n['courtsMethod' + String(method).toUpperCase()] || method).toUpperCase())) : '',
+            answerBy ? div({ class: 'card-field' }, span({ class: 'card-label' }, i18n.courtsThAnswerBy + ':'), span({ class: 'card-value' }, new Date(answerBy).toLocaleString())) : '',
+            evidenceBy ? div({ class: 'card-field' }, span({ class: 'card-label' }, i18n.courtsThEvidenceBy + ':'), span({ class: 'card-value' }, new Date(evidenceBy).toLocaleString())) : '',
+            decisionBy ? div({ class: 'card-field' }, span({ class: 'card-label' }, i18n.courtsThDecisionBy + ':'), span({ class: 'card-value' }, new Date(decisionBy).toLocaleString())) : '',
+            accuser ? div({ class: 'card-field' }, span({ class: 'card-label' }, i18n.courtsAccuser + ':'), span({ class: 'card-value' }, a({ href: `/author/${encodeURIComponent(accuser)}`, class: 'user-link' }, accuser))) : '',
+            typeof needed !== 'undefined' ? div({ class: 'card-field' }, span({ class: 'card-label' }, i18n.courtsVotesNeeded + ':'), span({ class: 'card-value' }, String(needed))) : '',
+            (typeof yes !== 'undefined' || typeof total !== 'undefined') ? div({ class: 'card-field' }, span({ class: 'card-label' }, i18n.courtsVotesSlashTotal + ':'), span({ class: 'card-value' }, `${Number(yes || 0)}/${Number(total || 0)}`)) : '',
+            voteId ? div({ class: 'card-field' }, span({ class: 'card-label' }, i18n.courtsOpenVote + ':'), a({ href: `/votes/${encodeURIComponent(voteId)}`, class: 'tag-link' }, i18n.viewDetails || 'View details')) : ''
+          )
+        );
+      } else if (type === 'courtsNomination') {
+        const { judgeId } = content;
+        cardBody.push(
+          div({ class: 'card-section courts' },
+            judgeId ? div({ class: 'card-field' }, span({ class: 'card-label' }, i18n.courtsJudge + ':'), span({ class: 'card-value' }, a({ href: `/author/${encodeURIComponent(judgeId)}`, class: 'user-link' }, judgeId))) : ''
+          )
+        );
+      } else {
+        skip = true;
+      }
+    }
+
+    const viewHref = getViewDetailsAction(type, action);
+    const isParliamentTarget =
+      viewHref === '/parliament?filter=candidatures' ||
+      viewHref === '/parliament?filter=government'   ||
+      viewHref === '/parliament?filter=proposals'    ||
+      viewHref === '/parliament?filter=revocations'  ||
+      viewHref === '/parliament?filter=laws';
+
+    const isCourtsTarget =
+      viewHref === '/courts?filter=cases'    ||
+      viewHref === '/courts?filter=mycases'  ||
+      viewHref === '/courts?filter=actions'  ||
+      viewHref === '/courts?filter=judges'   ||
+      viewHref === '/courts?filter=history'  ||
+      viewHref === '/courts?filter=rules'    ||
+      viewHref === '/courts?filter=open';
+
+    const parliamentFilter = isParliamentTarget ? (viewHref.split('filter=')[1] || '') : '';
+    const courtsFilter     = isCourtsTarget     ? (viewHref.split('filter=')[1] || '') : '';
+
+    if (skip) {
+      return null;
+    }
+
+    return div({ class: 'card card-rpg' },
+      div({ class: 'card-header' },
+        h2({ class: 'card-label' }, headerText),
+        type !== 'feed' && type !== 'aiExchange' && type !== 'bankWallet' && (!action.tipId || action.tipId === action.id)
+          ? (
+              isParliamentTarget
+                ? form(
+                    { method: "GET", action: "/parliament" },
+                    input({ type: "hidden", name: "filter", value: parliamentFilter }),
+                    button({ type: "submit", class: "filter-btn" }, i18n.viewDetails)
+                  )
+                : isCourtsTarget
+                  ? form(
+                      { method: "GET", action: "/courts" },
+                      input({ type: "hidden", name: "filter", value: courtsFilter }),
+                      button({ type: "submit", class: "filter-btn" }, i18n.viewDetails)
+                    )
+                  : form(
+                      { method: "GET", action: viewHref },
+                      button({ type: "submit", class: "filter-btn" }, i18n.viewDetails)
+                    )
+            )
+          : ''
+      ),
+      div({ class: 'card-body' }, ...cardBody),
+      p({ class: 'card-footer' },
+        span({ class: 'date-link' }, `${date} ${i18n.performed} `),
+        a({ href: `/author/${encodeURIComponent(action.author)}`, class: 'user-link' }, `${action.author}`)
+      )
+    );
+  });
+
+  const filteredCards = cards.filter(Boolean);
+  if (!filteredCards.length) {
+    return div({ class: "no-actions" }, p(i18n.noActions));
+  }
+  return filteredCards;
+}
+
+function getViewDetailsAction(type, action) {
+  const id = encodeURIComponent(safeMsgId(action.tipId || action.id || action.key || action));
+  switch (type) {
+    case 'parliamentCandidature':   return `/parliament?filter=candidatures`;
+    case 'parliamentTerm':          return `/parliament?filter=government`;
+    case 'parliamentProposal':      return `/parliament?filter=proposals`;
+    case 'parliamentRevocation':    return `/parliament?filter=revocations`;
+    case 'parliamentLaw':           return `/parliament?filter=laws`;
+    case 'courtsCase':              return `/courts/cases/${encodeURIComponent(action.id)}`;
+    case 'courtsEvidence':          return `/courts?filter=actions`;
+    case 'courtsAnswer':            return `/courts?filter=actions`;
+    case 'courtsVerdict':           return `/courts?filter=actions`;
+    case 'courtsSettlement':        return `/courts?filter=actions`;
+    case 'courtsSettlementProposal':return `/courts?filter=actions`;
+    case 'courtsSettlementAccepted':return `/courts?filter=actions`;
+    case 'courtsNomination':        return `/courts?filter=judges`;
+    case 'courtsNominationVote':    return `/courts?filter=judges`;
+    case 'tribeJoin':
+    case 'tribeLeave':
+    case 'tribeFeedPost':
+    case 'tribeFeedRefeed':
+    return `/tribe/${encodeURIComponent(action.content?.tribeId || '')}`;
+    case 'spread': {
+      const link = normalizeSpreadLink(action.content?.spreadTargetId || action.content?.vote?.link || '');
+      return link ? `/thread/${encodeURIComponent(link)}#${encodeURIComponent(link)}` : `/activity`;
+    }
+    case 'post':       return `/thread/${id}#${id}`;
+    case 'vote':       return `/thread/${encodeURIComponent(action.content.vote.link)}#${encodeURIComponent(action.content.vote.link)}`;
+    case 'votes':      return `/votes/${id}`;
+    case 'transfer':   return `/transfers/${id}`;
+    case 'pixelia':    return `/pixelia`;
+    case 'tribe':      return `/tribe/${id}`;
+    case 'curriculum': return `/inhabitant/${encodeURIComponent(action.author)}`;
+    case 'karmaScore': return `/author/${encodeURIComponent(action.author)}`;
+    case 'image':      return `/images/${id}`;
+    case 'audio':      return `/audios/${id}`;
+    case 'video':      return `/videos/${id}`;
+    case 'forum':      return `/forum/${encodeURIComponent(action.content?.key || action.tipId || action.id)}`;
+    case 'document':   return `/documents/${id}`;
+    case 'bookmark':   return `/bookmarks/${id}`;
+    case 'event':      return `/events/${id}`;
+    case 'task':       return `/tasks/${id}`;
+    case 'taskAssignment': return `/tasks/${encodeURIComponent(action.content?.taskId || action.tipId || action.id)}`;
+    case 'about':      return `/author/${encodeURIComponent(action.author)}`;
+    case 'contact':    return `/inhabitants`;
+    case 'pub':        return `/invites`;
+    case 'market':     return `/market/${id}`;
+    case 'job':        return `/jobs/${id}`;
+    case 'project':    return `/projects/${id}`;
+    case 'report':     return `/reports/${id}`;
+    case 'bankWallet': return `/wallet`;
+    case 'bankClaim':  return `/banking${action.content?.epochId ? `/epoch/${encodeURIComponent(action.content.epochId)}` : ''}`;
+    default:           return `/activity`;
+  }
+}
+
+exports.activityView = (actions, filter, userId, q = '') => {
+  const title = filter === 'mine' ? i18n.yourActivity : i18n.globalActivity;
+  const desc = i18n.activityDesc;
+
+  const activityTypes = [
+    { type: 'recent',    label: i18n.typeRecent },
+    { type: 'all',       label: i18n.allButton },
+    { type: 'mine',      label: i18n.mineButton },
+    { type: 'banking',   label: i18n.typeBanking },
+    { type: 'market',    label: i18n.typeMarket },
+    { type: 'project',   label: i18n.typeProject },
+    { type: 'job',       label: i18n.typeJob },
+    { type: 'transfer',  label: i18n.typeTransfer },
+    { type: 'parliament',label: i18n.typeParliament },
+    { type: 'courts',    label: i18n.typeCourts },
+    { type: 'votes',     label: i18n.typeVotes },
+    { type: 'event',     label: i18n.typeEvent },
+    { type: 'task',      label: i18n.typeTask },
+    { type: 'report',    label: i18n.typeReport },
+    { type: 'tribe',     label: i18n.typeTribe },
+    { type: 'about',     label: i18n.typeAbout },
+    { type: 'curriculum',label: i18n.typeCurriculum },
+    { type: 'karmaScore',label: i18n.typeKarmaScore },
+    { type: 'feed',      label: i18n.typeFeed },
+    { type: 'aiExchange',label: i18n.typeAiExchange },
+    { type: 'post',      label: i18n.typePost },
+    { type: 'spread',    label: i18n.typeSpread || 'SPREAD' },
+    { type: 'pixelia',   label: i18n.typePixelia },
+    { type: 'forum',     label: i18n.typeForum },
+    { type: 'bookmark',  label: i18n.typeBookmark },
+    { type: 'image',     label: i18n.typeImage },
+    { type: 'video',     label: i18n.typeVideo },
+    { type: 'audio',     label: i18n.typeAudio },
+    { type: 'document',  label: i18n.typeDocument }
+  ];
+
+  let filteredActions;
+  if (filter === 'mine') {
+    filteredActions = actions.filter(action => action.author === userId && action.type !== 'tombstone');
+  } else if (filter === 'recent') {
+    const now = Date.now();
+    filteredActions = actions.filter(action => action.type !== 'tombstone' && action.ts && now - action.ts < 24 * 60 * 60 * 1000);
+  } else if (filter === 'banking') {
+    filteredActions = actions.filter(action => action.type !== 'tombstone' && (action.type === 'bankWallet' || action.type === 'bankClaim'));
+  } else if (filter === 'tribe') {
+    filteredActions = actions.filter(action =>
+      action.type !== 'tombstone' &&
+      String(action.type || '').startsWith('tribe') &&
+      action.type !== 'tribe'
+    );
+  } else if (filter === 'parliament') {
+    filteredActions = actions.filter(action => ['parliamentCandidature','parliamentTerm','parliamentProposal','parliamentRevocation','parliamentLaw'].includes(action.type));
+  } else if (filter === 'courts') {
+    filteredActions = actions.filter(action => {
+      const t = String(action.type || '').toLowerCase();
+      return t === 'courtscase' || t === 'courtsnomination' || t === 'courtsnominationvote';
+    });
+  } else if (filter === 'task') {
+    filteredActions = actions.filter(action => action.type !== 'tombstone' && (action.type === 'task' || action.type === 'taskAssignment'));
+  } else if (filter === 'spread') {
+    filteredActions = actions.filter(action => action.type === 'spread');
+  } else {
+    filteredActions = actions.filter(action => (action.type === filter || filter === 'all') && action.type !== 'tombstone');
+  }
+
+  const qs = String(q || '').trim();
+  if (qs) {
+    const qn = qs.toLowerCase();
+    filteredActions = filteredActions.filter(a0 => {
+      const t = String(a0.type || '').toLowerCase();
+      const author = String(a0.author || '').toLowerCase();
+      const id0 = String(a0.id || '').toLowerCase();
+      const c0 = a0.value?.content || a0.content || {};
+      const blob = [
+        t, author, id0,
+        c0.text, c0.title, c0.name, c0.description, c0.contentWarning,
+        c0.about, c0.contact,
+        c0.spreadTitle, c0.spreadText, c0.spreadOriginalAuthor,
+        c0.vote?.link,
+        c0.address?.host, c0.address?.key
+      ].filter(Boolean).join(' ').toLowerCase();
+      return blob.includes(qn);
+    });
+  }
+
+  let html = template(
+    title,
+    section(
+      div({ class: 'tags-header' },
+        h2(i18n.activityList),
+        p(desc)
+      ),
+      form({ method: 'GET', action: '/activity' },
+        div({ class: 'mode-buttons', style: 'display:grid; grid-template-columns: repeat(6, 1fr); gap: 16px; margin-bottom: 24px;' },
+          div({ style: 'display: flex; flex-direction: column; gap: 8px;' },
+            activityTypes.slice(0, 3).map(({ type, label }) =>
+              form({ method: 'GET', action: '/activity' },
+                input({ type: 'hidden', name: 'filter', value: type }),
+                button({ type: 'submit', class: filter === type ? 'filter-btn active' : 'filter-btn' }, label)
+              )
+            )
+          ),
+          div({ style: 'display: flex; flex-direction: column; gap: 8px;' },
+            activityTypes.slice(3, 8).map(({ type, label }) =>
+              form({ method: 'GET', action: '/activity' },
+                input({ type: 'hidden', name: 'filter', value: type }),
+                button({ type: 'submit', class: filter === type ? 'filter-btn active' : 'filter-btn' }, label)
+              )
+            )
+          ),
+          div({ style: 'display: flex; flex-direction: column; gap: 8px;' },
+            activityTypes.slice(8, 12).map(({ type, label }) =>
+              form({ method: 'GET', action: '/activity' },
+                input({ type: 'hidden', name: 'filter', value: type }),
+                button({ type: 'submit', class: filter === type ? 'filter-btn active' : 'filter-btn' }, label)
+              )
+            )
+          ),
+          div({ style: 'display: flex; flex-direction: column; gap: 8px;' },
+            activityTypes.slice(12, 17).map(({ type, label }) =>
+              form({ method: 'GET', action: '/activity' },
+                input({ type: 'hidden', name: 'filter', value: type }),
+                button({ type: 'submit', class: filter === type ? 'filter-btn active' : 'filter-btn' }, label)
+              )
+            )
+          ),
+          div({ style: 'display: flex; flex-direction: column; gap: 8px;' },
+            activityTypes.slice(17, 22).map(({ type, label }) =>
+              form({ method: 'GET', action: '/activity' },
+                input({ type: 'hidden', name: 'filter', value: type }),
+                button({ type: 'submit', class: filter === type ? 'filter-btn active' : 'filter-btn' }, label)
+              )
+            )
+          ),
+          div({ style: 'display: flex; flex-direction: column; gap: 8px;' },
+            activityTypes.slice(22, 27).map(({ type, label }) =>
+              form({ method: 'GET', action: '/activity' },
+                input({ type: 'hidden', name: 'filter', value: type }),
+                button({ type: 'submit', class: filter === type ? 'filter-btn active' : 'filter-btn' }, label)
+              )
+            )
+          )
+        )
+      ),
+    section({ class: 'feed-container' }, renderActionCards(filteredActions, userId, actions))
+    )
+  );
+
+  const hasDocument = actions.some(a => a && a.type === 'document');
+  if (hasDocument) {
+    html += `
+      <script type="module" src="/js/pdf.min.mjs"></script>
+      <script src="/js/pdf-viewer.js"></script>
+    `;
+  }
+  return html;
+};
+

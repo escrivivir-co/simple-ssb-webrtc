@@ -1,0 +1,63 @@
+{
+  "logging": {
+    "level": "notice"
+  },
+  "caps": {
+    "shs": "zTmidAb7t+tKi7W93FIHbOvlbd936x6G/vm8e8Td//A="
+  },
+  "pub": false,
+  "local": true,
+  "friends": {
+    "dunbar": 300,
+    "hops": 2
+  },
+  "gossip": {
+    "connections": 20,
+    "local": true,
+    "friends": true,
+    "seed": true,
+    "global": true
+  },
+  "replicationScheduler": {
+    "autostart": true,
+    "partialReplication": null
+  },
+  "autofollow": {
+    "enabled": false,
+    "feeds": []
+  },
+  "connections": {
+    "seeds": [
+      "net:solarnethub.com:8008~shs:mGrevRCSX4E5dLgmflWBc50Qkn/1RXUAtDaGHOJ8xB4=.ed25519"
+    ],
+    "incoming": {
+      "net": [
+        {
+          "scope": ["device", "local"],
+          "transform": "shs",
+          "port": 8008
+        }
+      ],
+      "unix": [
+        {
+          "scope": [
+            "device",
+            "local",
+            "private"
+          ],
+          "transform": "noauth"
+        }
+      ]
+    },
+    "outgoing": {
+      "net": [
+        {
+          "transform": "shs"
+        }
+      ],
+      "tunnel": [],
+      "onion": [],
+      "ws": []
+    }
+  }
+}
