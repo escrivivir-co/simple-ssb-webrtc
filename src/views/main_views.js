@@ -299,6 +299,21 @@ const renderCipherLink = () => {
   return "";
 };
 
+const renderWebrtcLink = () => {
+  const webrtcMod = getConfig().modules.webrtcMod === "on";
+  if (webrtcMod) {
+    return [
+      navLink({
+        href: "/webrtc",
+        emoji: "☍",
+        text: i18n.webrtc || "WebRTC",
+        class: "webrtc-link enabled"
+      })
+    ];
+  }
+  return "";
+};
+
 const renderBookmarksLink = () => {
   const bookmarksMod = getConfig().modules.bookmarksMod === "on";
   return bookmarksMod
@@ -845,6 +860,7 @@ const template = (titlePrefix, ...elements) => {
                   text: i18n.blockchain
                 }),
                 renderCipherLink(),
+                renderWebrtcLink(),
                 renderLegacyLink()
               )
             )

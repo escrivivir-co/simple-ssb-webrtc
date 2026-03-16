@@ -637,6 +637,7 @@ const { peersView } = require("../views/peers_view");
 const { searchView } = require("../views/search_view");
 const { transferView, singleTransferView } = require("../views/transfer_view");
 const { cipherView } = require("../views/cipher_view");
+const { webrtcView } = require("../views/webrtc_view");
 const { imageView, singleImageView } = require("../views/image_view");
 const { settingsView } = require("../views/settings_view");
 const { trendingView } = require("../views/trending_view");
@@ -732,7 +733,7 @@ router
     ctx.body = await popularView({ messages, prefix: nav(div({ class: "filters" }, ul(['day','week','month','year'].map(p => li(form({ method: "GET", action: `/public/popular/${p}` }, button({ type: "submit", class: "filter-btn" }, t[p]))))))) });
   }) 
   .get("/modules", async (ctx) => {
-    const modules = ['popular', 'topics', 'summaries', 'latest', 'threads', 'multiverse', 'invites', 'wallet', 'legacy', 'cipher', 'bookmarks', 'videos', 'docs', 'audios', 'tags', 'images', 'trending', 'events', 'tasks', 'market', 'tribes', 'votes', 'reports', 'opinions', 'transfers', 'feed', 'pixelia', 'agenda', 'favorites', 'ai', 'forum', 'jobs', 'projects', 'banking', 'parliament', 'courts'];
+    const modules = ['popular', 'topics', 'summaries', 'latest', 'threads', 'multiverse', 'invites', 'wallet', 'legacy', 'cipher', 'bookmarks', 'videos', 'docs', 'audios', 'tags', 'images', 'trending', 'events', 'tasks', 'market', 'tribes', 'votes', 'reports', 'opinions', 'transfers', 'feed', 'pixelia', 'agenda', 'favorites', 'ai', 'forum', 'jobs', 'projects', 'banking', 'parliament', 'courts', 'webrtc'];
     const cfg = getConfig().modules;
     ctx.body = modulesView(modules.reduce((acc, m) => { acc[`${m}Mod`] = cfg[`${m}Mod`]; return acc; }, {}));
   })
@@ -1708,6 +1709,10 @@ router
     } catch (error) {
       ctx.body = { error: error.message };
     }
+  })
+  .get('/webrtc', async (ctx) => {
+    if (!checkMod(ctx, 'webrtcMod')) { ctx.redirect('/modules'); return; }
+    ctx.body = webrtcView();
   })  
   .get("/thread/:message", async (ctx) => {
     const { message } = ctx.params;
@@ -3122,11 +3127,11 @@ router
   })
   .post("/settings/rebuild", async ctx => { meta.rebuild(); ctx.redirect("/settings"); })
   .post("/modules/preset", koaBody(), async (ctx) => {
-    const ALL_MODULES = ['popular', 'topics', 'summaries', 'latest', 'threads', 'multiverse', 'invites', 'wallet', 'legacy', 'cipher', 'bookmarks', 'videos', 'docs', 'audios', 'tags', 'images', 'trending', 'events', 'tasks', 'market', 'tribes', 'votes', 'reports', 'opinions', 'transfers', 'feed', 'pixelia', 'agenda', 'favorites', 'ai', 'forum', 'jobs', 'projects', 'banking', 'parliament', 'courts'];
+    const ALL_MODULES = ['popular', 'topics', 'summaries', 'latest', 'threads', 'multiverse', 'invites', 'wallet', 'legacy', 'cipher', 'bookmarks', 'videos', 'docs', 'audios', 'tags', 'images', 'trending', 'events', 'tasks', 'market', 'tribes', 'votes', 'reports', 'opinions', 'transfers', 'feed', 'pixelia', 'agenda', 'favorites', 'ai', 'forum', 'jobs', 'projects', 'banking', 'parliament', 'courts', 'webrtc'];
     const PRESETS = {
       minimal: ['feed', 'forum', 'images', 'videos', 'audios', 'bookmarks', 'tags', 'trending', 'popular', 'latest', 'threads', 'opinions', 'cipher', 'legacy'],
-      social: ['agenda', 'audios', 'bookmarks', 'cipher', 'courts', 'docs', 'events', 'favorites', 'feed', 'forum', 'images', 'invites', 'legacy', 'multiverse', 'opinions', 'parliament', 'pixelia', 'projects', 'reports', 'tags', 'tasks', 'threads', 'trending', 'tribes', 'videos', 'votes'],
-      economy: ['agenda', 'audios', 'bookmarks', 'cipher', 'courts', 'docs', 'events', 'favorites', 'feed', 'forum', 'images', 'invites', 'legacy', 'multiverse', 'opinions', 'parliament', 'pixelia', 'projects', 'reports', 'tags', 'tasks', 'threads', 'trending', 'tribes', 'videos', 'votes', 'banking', 'wallet', 'transfers', 'market', 'jobs'],
+      social: ['agenda', 'audios', 'bookmarks', 'cipher', 'courts', 'docs', 'events', 'favorites', 'feed', 'forum', 'images', 'invites', 'legacy', 'multiverse', 'opinions', 'parliament', 'pixelia', 'projects', 'reports', 'tags', 'tasks', 'threads', 'trending', 'tribes', 'videos', 'votes', 'webrtc'],
+      economy: ['agenda', 'audios', 'bookmarks', 'cipher', 'courts', 'docs', 'events', 'favorites', 'feed', 'forum', 'images', 'invites', 'legacy', 'multiverse', 'opinions', 'parliament', 'pixelia', 'projects', 'reports', 'tags', 'tasks', 'threads', 'trending', 'tribes', 'videos', 'votes', 'banking', 'wallet', 'transfers', 'market', 'jobs', 'webrtc'],
       full: ALL_MODULES
     };
     const preset = String(ctx.request.body.preset || '');
@@ -3138,7 +3143,7 @@ router
     ctx.redirect('/modules');
   })
   .post("/save-modules", koaBody(), async (ctx) => {
-    const modules = ['popular', 'topics', 'summaries', 'latest', 'threads', 'multiverse', 'invites', 'wallet', 'legacy', 'cipher', 'bookmarks', 'videos', 'docs', 'audios', 'tags', 'images', 'trending', 'events', 'tasks', 'market', 'tribes', 'votes', 'reports', 'opinions', 'transfers', 'feed', 'pixelia', 'agenda', 'favorites', 'ai', 'forum', 'jobs', 'projects', 'banking', 'parliament', 'courts'];
+    const modules = ['popular', 'topics', 'summaries', 'latest', 'threads', 'multiverse', 'invites', 'wallet', 'legacy', 'cipher', 'bookmarks', 'videos', 'docs', 'audios', 'tags', 'images', 'trending', 'events', 'tasks', 'market', 'tribes', 'votes', 'reports', 'opinions', 'transfers', 'feed', 'pixelia', 'agenda', 'favorites', 'ai', 'forum', 'jobs', 'projects', 'banking', 'parliament', 'courts', 'webrtc'];
     const cfg = getConfig();
     modules.forEach(mod => cfg.modules[`${mod}Mod`] = ctx.request.body[`${mod}Form`] === 'on' ? 'on' : 'off');
     saveConfig(cfg);
@@ -3217,6 +3222,7 @@ const middleware = [
   },
   async (ctx, next) => { setLanguage(ctx.cookies.get("language") || getConfig().language || "en"); await next(); },
   async (ctx, next) => {
+    if (ctx.path.startsWith('/webrtc') || ctx.path.startsWith('/js/') || ctx.path.startsWith('/assets/')) { await next(); return; }
     const ssb = await cooler.open(), status = await ssb.status(), values = Object.values(status.sync.plugins);
     const totalCurrent = values.reduce((acc, cur) => acc + cur, 0), totalTarget = status.sync.since * values.length;
     if (totalTarget - totalCurrent > 1024 * 1024) ctx.response.body = indexingView({ percent: Math.floor((totalCurrent / totalTarget) * 1000) / 10 });
@@ -3241,7 +3247,7 @@ const middleware = [
     } }
   },
   async (ctx, next) => {
-    if (!ctx.path.startsWith('/assets/') && !ctx.path.startsWith('/image/') && !ctx.path.startsWith('/blob/')) {
+    if (!ctx.path.startsWith('/assets/') && !ctx.path.startsWith('/image/') && !ctx.path.startsWith('/blob/') && !ctx.path.startsWith('/webrtc') && !ctx.path.startsWith('/js/')) {
       const now = Date.now();
       if (now - sharedState.getLastRefresh() > 60000) {
         sharedState.setLastRefresh(now);
