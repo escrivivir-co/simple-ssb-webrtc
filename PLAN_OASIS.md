@@ -8,21 +8,29 @@
 > **Motivo**: Los mantenedores de Oasis rechazaron el PR con JS en cliente.
 > La filosofía de Oasis es "server-rendered HTML, no client-side JS".
 > Además, JS en localhost expone a CSRF desde otras pestañas.
+>
+> **Media streams (audio/video)**: Oasis es una app local — Node.js corre en la
+> máquina del usuario. Por tanto, ffmpeg tiene acceso directo al micrófono y la
+> cámara del sistema operativo. La captura, codificación y transporte de media
+> se realizan enteramente en Node.js. El navegador reproduce vía elementos HTML
+> nativos: `<img>` para MJPEG (vídeo) y `<audio>` para streaming (audio).
+> **No se necesita `getUserMedia` ni JavaScript para media.**
 
 ---
 
 ## Índice
 
 1. [Arquitectura general](#arquitectura-general)
-2. [Flujo de datos detallado](#flujo-de-datos-detallado)
-3. [Estados de la vista](#estados-de-la-vista)
-4. [ICE / STUN / TURN](#ice--stun--turn)
-5. [Steps (Phases)](#steps)
-6. [Ficheros relevantes](#ficheros-relevantes)
-7. [Detalle de implementación](#detalle-de-implementación)
-8. [Verificación](#verificación)
-9. [Decisiones](#decisiones)
-10. [Consideraciones futuras](#consideraciones-futuras)
+2. [Arquitectura de media streams](#arquitectura-de-media-streams)
+3. [Flujo de datos detallado](#flujo-de-datos-detallado)
+4. [Estados de la vista](#estados-de-la-vista)
+5. [ICE / STUN / TURN](#ice--stun--turn)
+6. [Steps (Phases)](#steps)
+7. [Ficheros relevantes](#ficheros-relevantes)
+8. [Detalle de implementación](#detalle-de-implementación)
+9. [Verificación](#verificación)
+10. [Decisiones](#decisiones)
+11. [Consideraciones futuras](#consideraciones-futuras)
 
 ---
 
@@ -82,17 +90,22 @@
 ```
 ┌─────────────────────────────────────────┐
 │        Navegador (sin JS)               │  Formularios HTML + <meta refresh>
-│  <form method="POST" action="/webrtc/*">│
+│  <form method="POST" action="/webrtc/*">│  <img src="/webrtc/media/video"> (MJPEG)
+│  <audio src="/webrtc/media/audio">      │  <audio autoplay> (streaming nativo)
 ├─────────────────────────────────────────┤
 │        webrtc_view.js                   │  Vista hyperaxe, renderiza según estado
 │  webrtcView(state, data)                │  Patrón: cipher_view.js
 ├─────────────────────────────────────────┤
 │        backend.js (rutas)               │  GET /webrtc + POST /webrtc/*
-│  koaBody() + ctx.request.body           │  Patrón: cipher encrypt/decrypt
+│  koaBody() + ctx.request.body           │  GET /webrtc/media/{video,audio} streams
 ├─────────────────────────────────────────┤
 │        webrtc_model.js                  │  Estado en memoria + node-datachannel
 │  createOffer(), processOffer(),         │  Patrón: cipher_model.js (stateless)
 │  processAnswer(), sendMessage(), etc.   │  + tasks_model.js (factory con cooler)
+├─────────────────────────────────────────┤
+│        media_capture.js                 │  ffmpeg child_process: captura mic/cam
+│  startCapture(devices), stopCapture()   │  Encode → RTP → node-datachannel Track
+│  startPlayback(), getVideoStream()      │  Decode RTP remoto → MJPEG/PCM HTTP
 ├─────────────────────────────────────────┤
 │     Signaling Abstraction Layer         │  ssb-webrtc/signaling/index.js
 │  .send(peer, type, payload)             │
@@ -111,7 +124,7 @@
 | DataChannel | Browser ↔ Browser | Server ↔ Server |
 | Interacción usuario | JavaScript DOM manipulation | `<form method="POST">` nativo |
 | Actualización de chat | JS `onmessage` event en tiempo real | `<meta http-equiv="refresh" content="5">` polling |
-| Audio/Video | getUserMedia + `<video>` | ❌ No disponible (getUserMedia es solo browser) |
+| Audio/Video | getUserMedia + `<video>` | ffmpeg captura mic/cam local → node-datachannel media tracks → browser reproduce vía `<img>` MJPEG + `<audio>` streaming (sin JS) |
 | Estado de sesión | Variables JS en el navegador | Variables en memoria del proceso Node.js |
 | Seguridad CSRF | Vulnerable (JS en localhost) | Protegido (referer validation + CSP form-action) |
 | Complejidad cliente | ~370 líneas JS (webrtc-app.js) | 0 líneas JS |
@@ -124,6 +137,210 @@
 | **ssb-conn** | Peers SSB conectados | `webrtc-signal` privado | ssb-private, peers online |
 | **ssb-lan** | Misma LAN | `webrtc-signal` privado | ssb-lan, red local |
 | **socket.io** | Peers remotos, pub relay | `post` privado o directo | Pub con socket.io |
+
+---
+
+## Arquitectura de media streams
+
+> **Premisa clave**: Oasis es una **app local** — el proceso Node.js corre en la
+> misma máquina que el usuario. Por tanto, `ffmpeg` tiene acceso directo al
+> micrófono y la cámara del sistema operativo, exactamente igual que un navegador
+> tendría acceso vía `getUserMedia()`. La diferencia es que no necesitamos
+> JavaScript en el cliente para nada: ni para capturar, ni para codificar, ni
+> para reproducir.
+
+### Por qué funciona sin JS en el navegador
+
+| Función | Navegador tradicional (JS) | Oasis backend-only (sin JS) |
+|---|---|---|
+| **Captura** de cámara/mic | `getUserMedia()` en JS | `ffmpeg -f avfoundation\|v4l2\|dshow` en Node.js |
+| **Codificación** | WebRTC stack interno del browser | ffmpeg encode (VP8/H.264 + Opus) |
+| **Transporte** | RTCPeerConnection media tracks | `node-datachannel` media tracks (mismo protocolo WebRTC) |
+| **Reproducción vídeo** | `<video>` con `srcObject = stream` (JS) | `<img src="/webrtc/media/video">` con MJPEG stream (HTML nativo) |
+| **Reproducción audio** | `<audio>` con `srcObject = stream` (JS) | `<audio src="/webrtc/media/audio" autoplay>` con HTTP chunked (HTML nativo) |
+
+### Pipeline completo
+
+```
+  Peer A (máquina local)                                           Peer B (máquina remota)
+  ═════════════════════                                           ══════════════════════
+
+  ┌──────────────────┐
+  │  Mic / Cámara OS   │  Hardware del usuario
+  └────────┬─────────┘
+           │
+  ┌────────┴─────────┐
+  │  ffmpeg (captura)  │  child_process.spawn()
+  │  -f avfoundation   │  macOS: avfoundation
+  │  -i "0:0"          │  Linux: v4l2 + pulse
+  │  -c:v vp8/h264     │  Windows: dshow
+  │  -c:a opus         │
+  │  -f rtp            │  Salida: paquetes RTP
+  └────────┬─────────┘
+           │ RTP (UDP localhost o pipe)
+  ┌────────┴─────────┐
+  │ media_capture.js  │  Orquesta ffmpeg + alimenta tracks
+  └────────┬─────────┘
+           │ RTP packets
+  ┌────────┴─────────┐
+  │ node-datachannel  │  pc.addTrack() + track.sendMessage(rtp)
+  │ Audio/Video Track │
+  └────────┬─────────┘
+           │ WebRTC (DTLS-SRTP, ICE)
+           ║
+           ║ ========= Internet / LAN =========
+           ║
+  ┌────────┴─────────┐
+  │ node-datachannel  │  track.onMessage(rtp)
+  │ Audio/Video Track │
+  └────────┬─────────┘
+           │ RTP packets
+  ┌────────┴─────────┐
+  │ media_capture.js  │  Recibe RTP, alimenta ffmpeg decoder
+  └────┬──────┬───────┘
+       │          │
+       │ MJPEG    │ PCM/OGG
+       │          │
+  ┌────┴───┐  ┌───┴─────┐
+  │ ffmpeg  │  │ ffmpeg   │  Decodifica RTP → formatos HTTP
+  │ decode  │  │ decode   │
+  │ →MJPEG │  │ →PCM/OGG│
+  └────┬───┘  └───┬─────┘
+       │          │
+  ┌────┴──────────┴─────┐
+  │ HTTP streaming endpoints │  Koa routes en backend.js
+  │ GET /webrtc/media/video  │  Content-Type: multipart/x-mixed-replace
+  │ GET /webrtc/media/audio  │  Content-Type: audio/ogg (chunked transfer)
+  └────────┬─────────┬─────┘
+           │         │
+  ┌────────┴─────────┴─────┐
+  │ Navegador (sin JS)        │
+  │ <img src=".../video">      │  MJPEG: el browser renderiza frames
+  │ <audio src=".../audio"     │  Audio: el browser reproduce streaming
+  │        autoplay controls>  │  Todo nativo, cero JavaScript
+  └───────────────────────────┘
+```
+
+### Captura por sistema operativo
+
+ffmpeg detecta los dispositivos de entrada según el OS. `media_capture.js` auto-
+detecta la plataforma (`process.platform`) y usa el backend correcto:
+
+| OS | Backend ffmpeg | Comando captura cámara | Comando captura mic | Deteccdión de dispositivos |
+|---|---|---|---|---|
+| **macOS** | `avfoundation` | `ffmpeg -f avfoundation -i "0" -c:v vp8 -f rtp rtp://...` | `ffmpeg -f avfoundation -i ":0" -c:a libopus -f rtp rtp://...` | `ffmpeg -f avfoundation -list_devices true -i ""` |
+| **Linux** | `v4l2` + `pulse` | `ffmpeg -f v4l2 -i /dev/video0 -c:v vp8 -f rtp rtp://...` | `ffmpeg -f pulse -i default -c:a libopus -f rtp rtp://...` | `v4l2-ctl --list-devices` + `pactl list sources` |
+| **Windows** | `dshow` | `ffmpeg -f dshow -i video="Camera" -c:v vp8 -f rtp rtp://...` | `ffmpeg -f dshow -i audio="Mic" -c:a libopus -f rtp rtp://...` | `ffmpeg -f dshow -list_devices true -i dummy` |
+
+### Reproducción en el navegador sin JavaScript
+
+#### Vídeo: MJPEG sobre `<img>`
+
+`multipart/x-mixed-replace` es un content-type estándar que los navegadores
+soportan nativamente en tags `<img>`. Cada "parte" es un frame JPEG. El browser
+reemplaza la imagen continuamente, creando la ilusión de vídeo.
+
+```
+GET /webrtc/media/video HTTP/1.1
+
+HTTP/1.1 200 OK
+Content-Type: multipart/x-mixed-replace; boundary=frame
+
+--frame
+Content-Type: image/jpeg
+Content-Length: 12345
+
+<JPEG data>
+--frame
+Content-Type: image/jpeg
+Content-Length: 12346
+
+<JPEG data>
+... (infinito mientras la conexión esté abierta)
+```
+
+A nivel de vista:
+```html
+<img src="/webrtc/media/video" class="webrtc-video" alt="Remote video">
+```
+
+**Limitaciones de MJPEG**:
+- Mayor ancho de banda que H.264/VP8 (×10 aprox.) — aceptable en LAN
+- No tiene audio integrado — se transporta por separado
+- Latencia típica: 100-300ms (excelente para videoconferencia)
+- Calidad ajustable vía `-q:v` de ffmpeg (2=alta, 10=baja, 5=balance)
+
+#### Audio: Streaming HTTP sobre `<audio>`
+
+```html
+<audio src="/webrtc/media/audio" autoplay controls></audio>
+```
+
+El endpoint sirve audio codificado con `Transfer-Encoding: chunked`.
+Formatos posibles (por orden de preferencia):
+
+| Formato | Latencia | Soporte browser | Calidad | Comando ffmpeg |
+|---|---|---|---|---|
+| **OGG/Opus** | ~200ms | Chrome, Firefox | Excelente | `-c:a libopus -f ogg` |
+| **MP3** (CBR) | ~500ms | Universal | Buena | `-c:a libmp3lame -f mp3` |
+| **WAV** (PCM) | ~50ms | Universal | Máxima | `-c:a pcm_s16le -f wav` |
+
+**Recomendación**: OGG/Opus como default (buen balance latencia/calidad/ancho de
+banda). Fallback a MP3 si el browser no soporta Opus (Edge antiguo, Safari <15).
+
+### Modos de llamada
+
+El selector de modo en el estado `idle` determina qué tracks se negocian en SDP:
+
+| Modo | DataChannel | Audio Track | Video Track | Vista `connected` |
+|---|---|---|---|---|
+| `data` | ✅ | ❌ | ❌ | Solo chat |
+| `audio` | ✅ | ✅ | ❌ | Chat + `<audio>` |
+| `video` | ✅ | ✅ | ✅ | Chat + `<audio>` + `<img>` MJPEG |
+| `av` | ✅ | ✅ | ✅ | Chat + `<audio>` + `<img>` MJPEG (alias de video) |
+
+El modo se incluye en `state.mode` y viaja en el SDP. El respondedor detecta
+automáticamente qué tracks ofrece el creador y activa los suyos en reciprocidad.
+
+### Controles de media (sin JS)
+
+Sin JavaScript no hay toggles instantáneos. Los controles se implementan como
+formularios POST que el backend procesa:
+
+```html
+<!-- Mute mic -->
+<form method="POST" action="/webrtc/media/mic/toggle">
+  <button type="submit">🎙 Mute Mic</button>
+</form>
+
+<!-- Hide cam -->
+<form method="POST" action="/webrtc/media/cam/toggle">
+  <button type="submit">📷 Hide Cam</button>
+</form>
+```
+
+`media_capture.js` implementa mute/unmute pausando el pipe de ffmpeg (envía
+silencio/negro) sin cerrar la conexión WebRTC. Esto evita renegociación SDP.
+
+### Requisito: ffmpeg instalado
+
+ffmpeg es un requisito del sistema para media streams. El modelo verifica su
+presencia al intentar activar audio/video:
+
+```js
+const { execSync } = require('child_process');
+function checkFfmpeg() {
+  try { execSync('ffmpeg -version', { stdio: 'ignore' }); return true; }
+  catch { return false; }
+}
+```
+
+Si ffmpeg no está instalado, el modo `data` (solo chat) sigue funcionando.
+Los modos `audio`/`video` muestran un mensaje de error indicando que ffmpeg
+es necesario, con instrucciones de instalación por OS:
+- macOS: `brew install ffmpeg`
+- Linux: `sudo apt install ffmpeg` / `sudo dnf install ffmpeg`
+- Windows: `choco install ffmpeg` / descarga directa
 
 ---
 
@@ -267,11 +484,11 @@ siguiendo el patrón de `cipher_view.js` (argumentos determinan qué mostrar).
 
 | Estado | Se llega por | Vista renderiza | Formularios disponibles | Meta-refresh |
 |---|---|---|---|---|
-| `idle` | GET /webrtc (sin sesión) o POST /disconnect | Botones "Crear sala" / "Unirse", selector transporte | `<form POST /webrtc/create>`, link a formulario join | No |
+| `idle` | GET /webrtc (sin sesión) o POST /disconnect | Botones "Crear sala" / "Unirse", selector transporte, selector modo (data/audio/video) | `<form POST /webrtc/create>`, link a formulario join | No |
 | `offer-created` | POST /webrtc/create | Textarea readonly con offer code, formulario para pegar answer | `<form POST /webrtc/answer>` | No |
 | `answer-created` | POST /webrtc/join | Textarea readonly con answer code, mensaje "esperando conexión..." | `<form POST /webrtc/disconnect>` | Sí (5s) — para detectar cuando DataChannel abre |
 | `waiting-answer` | POST /webrtc/create (SSB) | Mensaje "Esperando respuesta de @peer..." | `<form POST /webrtc/disconnect>` | Sí (5s) — para detectar answer vía pull-stream |
-| `connected` | DataChannel `onOpen` callback | Chat: lista mensajes + formulario enviar + botón desconectar | `<form POST /webrtc/chat/send>`, `<form POST /webrtc/disconnect>` | Sí (5s) — polling mensajes entrantes |
+| `connected` | DataChannel `onOpen` callback | Chat + media (según modo) + controles + botón desconectar. **mode=data**: solo chat. **mode=audio**: chat + `<audio>` stream. **mode=video**: chat + `<audio>` + `<img>` MJPEG + controles mic/cam. | `<form POST /webrtc/chat/send>`, `<form POST /webrtc/media/mic/toggle>`, `<form POST /webrtc/media/cam/toggle>`, `<form POST /webrtc/disconnect>` | Sí (5s) — polling mensajes entrantes |
 | `error` | Cualquier error irrecuperable | Mensaje de error + botón "Volver" | `<form POST /webrtc/disconnect>` (limpia estado) | No |
 
 ### Detalle de cada estado renderizado
@@ -291,6 +508,12 @@ siguiendo el patrón de `cipher_view.js` (argumentos determinan qué mostrar).
       <select name="transport">
         <option value="manual">Manual (copy-paste)</option>
         <option value="ssb">SSB (automático)</option>
+      </select>
+      <label>Modo:</label>
+      <select name="mode">
+        <option value="data">Solo datos (chat)</option>
+        <option value="audio">Audio + chat</option>
+        <option value="video">Audio/Vídeo + chat</option>
       </select>
       <!-- Si transport=ssb, se muestra campo peerId -->
       <!-- Pero sin JS, AMBOS campos se muestran siempre; -->
@@ -339,16 +562,47 @@ siguiendo el patrón de `cipher_view.js` (argumentos determinan qué mostrar).
 </section>
 ```
 
-#### Estado `connected` (chat)
+#### Estado `connected` (chat + media)
 
 ```html
 <meta http-equiv="refresh" content="5">
 <section>
   <div class="card">
     <h3>☍ Conectado</h3>
-    <p>Estado: connected | DataChannel: open</p>
+    <p>Estado: connected | DataChannel: open | Modo: video</p>
   </div>
 
+  <!-- ═══ Panel de media (solo si mode=audio o mode=video) ═══ -->
+  <div class="card">
+    <h3>▶ Media</h3>
+    <div class="webrtc-video-grid">
+      <!-- Vídeo local: preview de lo que se envía (mode=video) -->
+      <div class="webrtc-video-box">
+        <label>Local</label>
+        <img src="/webrtc/media/video/local" class="webrtc-video" alt="Local video">
+      </div>
+      <!-- Vídeo remoto: decodificado del RTP entrante (mode=video) -->
+      <div class="webrtc-video-box">
+        <label>Remote</label>
+        <img src="/webrtc/media/video/remote" class="webrtc-video" alt="Remote video">
+      </div>
+    </div>
+
+    <!-- Audio remoto: solo si mode=audio o mode=video -->
+    <audio src="/webrtc/media/audio" autoplay controls></audio>
+
+    <!-- Controles media — formularios POST, sin JS -->
+    <div class="webrtc-media-controls">
+      <form method="POST" action="/webrtc/media/mic/toggle" style="display:inline">
+        <button type="submit">🎙 Mute Mic</button>
+      </form>
+      <form method="POST" action="/webrtc/media/cam/toggle" style="display:inline">
+        <button type="submit">📷 Hide Cam</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ═══ Chat (siempre, en todos los modos) ═══ -->
   <div class="card">
     <h3>ꕕ Chat</h3>
     <div class="webrtc-chat-messages">
@@ -452,18 +706,24 @@ que mezcla defaults (STUN Google) con overrides del operador (TURN propio/servic
    ```js
    module.exports = ({ cooler }) => {
      // Estado en memoria (singleton por proceso Oasis — single-user app)
-     let state = { phase: 'idle', pc: null, dc: null, offerCode: '', answerCode: '', messages: [], error: null };
-     return { createOffer, processOffer, processAnswer, sendMessage, getState, getMessages, disconnect };
+     let state = { phase: 'idle', pc: null, dc: null, offerCode: '', answerCode: '', messages: [], error: null, mode: 'data', media: null };
+     return { createOffer, processOffer, processAnswer, sendMessage, getState, getMessages, disconnect, startMedia, stopMedia, toggleMic, toggleCam, getVideoStream, getAudioStream };
    };
    ```
    **Funciones del modelo:**
-   - `createOffer(transport, peerId)` — Crea PeerConnection + DataChannel, genera offer, retorna offerCode. Si `transport='ssb'`, publica offer vía `sbot.webrtc.offer()`.
-   - `processOffer(offerCode)` — Decodifica offer, crea PeerConnection, setRemoteDescription, genera answer, retorna answerCode.
+   - `createOffer(transport, peerId, mode)` — Crea PeerConnection + DataChannel (+ media tracks si `mode` != 'data'), genera offer, retorna offerCode. Si `transport='ssb'`, publica offer vía `sbot.webrtc.offer()`.
+   - `processOffer(offerCode)` — Decodifica offer, crea PeerConnection, setRemoteDescription, genera answer. Auto-detecta si el offer incluye media tracks y añade los suyos en reciprocidad.
    - `processAnswer(answerCode)` — Decodifica answer, setRemoteDescription. DataChannel se abre vía callback.
    - `sendMessage(text)` — `dc.sendMessage(text)`, push a `state.messages[]`.
-   - `getState()` — Retorna `{ phase, offerCode, answerCode, error }` (sin exponer pc/dc).
+   - `getState()` — Retorna `{ phase, offerCode, answerCode, error, mode, micMuted, camHidden }` (sin exponer pc/dc).
    - `getMessages()` — Retorna `state.messages[]` y opcionalmente marca como leídos.
-   - `disconnect()` — Cierra dc + pc, resetea state a idle.
+   - `disconnect()` — Para ffmpeg (si activo), cierra dc + pc, resetea state a idle.
+   - `startMedia()` — Lanza ffmpeg para captura de mic/cam según `state.mode`. Alimenta RTP a los tracks de `node-datachannel`. Inicia ffmpeg decoder para media remoto entrante.
+   - `stopMedia()` — Mata procesos ffmpeg (captura + decodificación).
+   - `toggleMic()` — Pausa/reanuda pipe de audio a ffmpeg (envía silencio sin cerrar track).
+   - `toggleCam()` — Pausa/reanuda pipe de vídeo a ffmpeg (envía negro sin cerrar track).
+   - `getVideoStream(type)` — Retorna readable stream MJPEG para `type='local'|'remote'`. Usado por la ruta GET `/webrtc/media/video/:type`.
+   - `getAudioStream()` — Retorna readable stream OGG/Opus del audio remoto. Usado por GET `/webrtc/media/audio`.
    - `startListening()` — (SSB) Inicia pull-stream `sbot.webrtc.listen()` para señales entrantes.
 
 2. **Gestión de estado en memoria** — El estado vive en el closure del módulo:
@@ -534,20 +794,43 @@ que mezcla defaults (STUN Google) con overrides del operador (TURN propio/servic
 
 7. **Rutas POST** — Siguiendo patrones cipher (re-render) y pm (PRG):
    ```
-   GET  /webrtc              → Lee estado del modelo, renderiza webrtcView(state, data)
-   POST /webrtc/create       → webrtcModel.createOffer(transport, peerId), re-render
-   POST /webrtc/join         → webrtcModel.processOffer(offerCode), re-render
-   POST /webrtc/answer       → webrtcModel.processAnswer(answerCode), redirect GET /webrtc
-   POST /webrtc/chat/send    → webrtcModel.sendMessage(message), redirect GET /webrtc
-   POST /webrtc/disconnect   → webrtcModel.disconnect(), redirect GET /webrtc
+   GET  /webrtc                    → Lee estado del modelo, renderiza webrtcView(state, data)
+   POST /webrtc/create             → webrtcModel.createOffer(transport, peerId, mode), re-render
+   POST /webrtc/join               → webrtcModel.processOffer(offerCode), re-render
+   POST /webrtc/answer             → webrtcModel.processAnswer(answerCode), redirect GET /webrtc
+   POST /webrtc/chat/send          → webrtcModel.sendMessage(message), redirect GET /webrtc
+   POST /webrtc/media/mic/toggle   → webrtcModel.toggleMic(), redirect GET /webrtc
+   POST /webrtc/media/cam/toggle   → webrtcModel.toggleCam(), redirect GET /webrtc
+   POST /webrtc/disconnect         → webrtcModel.disconnect(), redirect GET /webrtc
+   GET  /webrtc/media/video/local  → streaming MJPEG del vídeo local (preview)
+   GET  /webrtc/media/video/remote → streaming MJPEG del vídeo remoto
+   GET  /webrtc/media/audio        → streaming OGG/Opus del audio remoto
    ```
 
-   **Patrón de ruta** (ejemplo para `/webrtc/create`):
+   **Rutas de media streaming** (long-lived HTTP responses):
+   ```js
+   .get('/webrtc/media/video/:type', async (ctx) => {
+     if (!checkMod(ctx, 'webrtcMod')) { ctx.status = 403; return; }
+     const stream = webrtcModel.getVideoStream(ctx.params.type); // 'local' | 'remote'
+     if (!stream) { ctx.status = 404; return; }
+     ctx.type = 'multipart/x-mixed-replace; boundary=frame';
+     ctx.body = stream; // readable stream que emite frames MJPEG
+   })
+   .get('/webrtc/media/audio', async (ctx) => {
+     if (!checkMod(ctx, 'webrtcMod')) { ctx.status = 403; return; }
+     const stream = webrtcModel.getAudioStream();
+     if (!stream) { ctx.status = 404; return; }
+     ctx.type = 'audio/ogg';
+     ctx.body = stream; // readable stream de audio OGG/Opus
+   })
+   ```
+
+   **Patrón de ruta** (ejemplo para `/webrtc/create` con mode):
    ```js
    .post('/webrtc/create', koaBody(), async (ctx) => {
      if (!checkMod(ctx, 'webrtcMod')) { ctx.redirect('/modules'); return; }
-     const { transport, peerId } = ctx.request.body;
-     await webrtcModel.createOffer(transport, peerId);
+     const { transport, peerId, mode } = ctx.request.body;
+     await webrtcModel.createOffer(transport, peerId, mode || 'data');
      const state = webrtcModel.getState();
      ctx.body = webrtcView(state.phase, state);
    })
@@ -570,7 +853,9 @@ que mezcla defaults (STUN Google) con overrides del operador (TURN propio/servic
    - `answerCode`: ídem
    - `message`: trim, longitud máxima (1000 chars), no vacío
    - `transport`: whitelist `['manual', 'ssb']`
+   - `mode`: whitelist `['data', 'audio', 'video']`
    - `peerId`: si transport=ssb, validar formato `@xxx.ed25519`
+   - Rutas de media streaming: validar que `state.phase === 'connected'` y `state.mode` incluye el tipo solicitado
 
 ### Phase 4: Vista (webrtc_view.js) — reescritura completa
 
@@ -578,7 +863,7 @@ que mezcla defaults (STUN Google) con overrides del operador (TURN propio/servic
    ```js
    const webrtcView = (phase = 'idle', data = {}) => {
      // phase: 'idle' | 'offer-created' | 'answer-created' | 'waiting-answer' | 'connected' | 'error'
-     // data: { offerCode, answerCode, messages, error, transport, peerId, status }
+     // data: { offerCode, answerCode, messages, error, transport, peerId, status, mode, micMuted, camHidden, hasFfmpeg }
    };
    ```
 
@@ -589,6 +874,37 @@ que mezcla defaults (STUN Google) con overrides del operador (TURN propio/servic
           h3("② Tu código Offer"),
           textarea({ readonly: true, rows: 4 }, data.offerCode),
           // ... formulario para pegar answer
+        )
+      : null;
+
+    // Panel de media — solo si mode != 'data' y phase === 'connected'
+    const mediaPanel = (phase === 'connected' && data.mode !== 'data')
+      ? div({ class: "card" },
+          h3("▶ Media"),
+          // Vídeo: <img> con MJPEG stream (solo si mode === 'video')
+          data.mode === 'video' ? div({ class: "webrtc-video-grid" },
+            div({ class: "webrtc-video-box" },
+              label("Local"),
+              img({ src: "/webrtc/media/video/local", class: "webrtc-video", alt: "Local" })
+            ),
+            div({ class: "webrtc-video-box" },
+              label("Remote"),
+              img({ src: "/webrtc/media/video/remote", class: "webrtc-video", alt: "Remote" })
+            )
+          ) : null,
+          // Audio: <audio> con streaming HTTP (mode=audio o mode=video)
+          audio({ src: "/webrtc/media/audio", autoplay: true, controls: true }),
+          // Controles: formularios POST
+          div({ class: "webrtc-media-controls" },
+            form({ method: "POST", action: "/webrtc/media/mic/toggle", style: "display:inline" },
+              button({ type: "submit" }, data.micMuted ? "🎙 Unmute" : "🎙 Mute")
+            ),
+            data.mode === 'video'
+              ? form({ method: "POST", action: "/webrtc/media/cam/toggle", style: "display:inline" },
+                  button({ type: "submit" }, data.camHidden ? "📷 Show" : "📷 Hide")
+                )
+              : null
+          )
         )
       : null;
     ```
@@ -604,6 +920,12 @@ que mezcla defaults (STUN Google) con overrides del operador (TURN propio/servic
     '<meta http-equiv="refresh" content="5"></head>')`, similar al patrón de
     `indexing_view.js` que usa `content: 10`.
 
+    **Nota sobre meta-refresh y media streams**: El `<meta refresh>` recarga la
+    página completa cada 5s. Las conexiones HTTP de los streams MJPEG/audio se
+    cierran y reabren. Esto es aceptable: ffmpeg sigue capturando/decodificando
+    en background, y el browser reconecta al endpoint inmediatamente. La latencia
+    de reconexión es ~100ms porque el stream ya está preparado en el servidor.
+
 12. **Sin `<script>` tag** — La línea actual que inyecta `webrtc-app.js` se elimina:
     ```js
     // ELIMINAR esta línea:
@@ -613,16 +935,129 @@ que mezcla defaults (STUN Google) con overrides del operador (TURN propio/servic
 13. **CSS** — Se mantiene `webrtc.css` (105 líneas, prefijo `webrtc-*`), pero:
     - Eliminar `.webrtc-hidden` (ya no hay toggle JS de visibilidad)
     - Eliminar estilos de elementos que ya no existen (`#btn-toggle-mic`, `#btn-toggle-cam`, etc.)
+    - Mantener `.webrtc-video-grid`, `.webrtc-video-box`, `.webrtc-video` (ahora usan `<img>` en vez de `<video>`)
+    - Mantener `.webrtc-media-controls` para los botones de mute/hide
     - Añadir estilos para textarea readonly (selección fácil para copiar)
+    - Añadir `.webrtc-audio-player` para el elemento `<audio>`
+
+### Phase 4b: Media capture (media_capture.js)
+
+> **Módulo nuevo** que encapsula toda la interacción con ffmpeg.
+> Se usa desde `webrtc_model.js` cuando `mode` != 'data'.
+
+14. **Crear `src/models/media_capture.js`** — Funciones puras + child_process:
+
+    ```js
+    const { spawn, execSync } = require('child_process');
+    const { PassThrough } = require('stream');
+
+    module.exports = {
+      checkFfmpeg,      // → boolean: ¿está ffmpeg instalado?
+      listDevices,      // → { cameras: [...], mics: [...] }
+      startCapture,     // (mode, onRtpAudio, onRtpVideo) → { process, stop() }
+      startDecoder,     // (type, onFrame) → { process, feed(rtpPacket), stop() }
+      createMjpegStream,  // () → PassThrough (multipart/x-mixed-replace)
+      createAudioStream,  // () → PassThrough (audio/ogg chunked)
+    };
+    ```
+
+    **`checkFfmpeg()`** — verifica que ffmpeg está en PATH:
+    ```js
+    function checkFfmpeg() {
+      try { execSync('ffmpeg -version', { stdio: 'ignore' }); return true; }
+      catch { return false; }
+    }
+    ```
+
+    **`listDevices()`** — enumera cámaras y micrófonos disponibles:
+    ```js
+    function listDevices() {
+      const platform = process.platform;
+      // macOS: ffmpeg -f avfoundation -list_devices true -i ""
+      // Linux: v4l2-ctl --list-devices + pactl list sources short
+      // Windows: ffmpeg -f dshow -list_devices true -i dummy
+      // Parsea stdout/stderr → { cameras: [{id, name}], mics: [{id, name}] }
+    }
+    ```
+
+    **`startCapture(mode, callbacks)`** — lanza ffmpeg para captura local:
+    ```js
+    function startCapture(mode, { onRtpAudio, onRtpVideo }) {
+      const platform = process.platform;
+      const args = buildCaptureArgs(platform, mode);
+      // Ejemplo macOS, mode=video:
+      //   ffmpeg -f avfoundation -i "0:0"
+      //     -c:v vp8 -f rtp pipe:1     ← video RTP al stdout
+      //     -c:a libopus -f rtp pipe:3  ← audio RTP a fd 3
+      //
+      // Alternativa más simple (2 procesos separados):
+      //   ffmpeg -f avfoundation -i "0" -c:v vp8 -f rtp rtp://127.0.0.1:PORT_V
+      //   ffmpeg -f avfoundation -i ":0" -c:a libopus -f rtp rtp://127.0.0.1:PORT_A
+      //
+      // Los paquetes RTP se capturan vía UDP socket en localhost
+      // y se alimentan a node-datachannel Track.sendMessage(rtpBuffer)
+      const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      return { process: proc, stop: () => proc.kill('SIGTERM') };
+    }
+    ```
+
+    **`startDecoder(type)`** — decodifica RTP remoto a formato HTTP-streameable:
+    ```js
+    function startDecoder(type) {
+      // type = 'video' → ffmpeg lee RTP → emite MJPEG frames
+      //   ffmpeg -protocol_whitelist pipe,rtp,udp -i pipe:0
+      //     -c:v mjpeg -f image2pipe -q:v 5 pipe:1
+      //
+      // type = 'audio' → ffmpeg lee RTP → emite OGG/Opus chunked
+      //   ffmpeg -protocol_whitelist pipe,rtp,udp -i pipe:0
+      //     -c:a libopus -f ogg pipe:1
+      const proc = spawn('ffmpeg', decoderArgs, { stdio: ['pipe', 'pipe', 'pipe'] });
+      return {
+        process: proc,
+        feed: (rtpPacket) => proc.stdin.write(rtpPacket),
+        stdout: proc.stdout, // readable stream para HTTP response
+        stop: () => proc.kill('SIGTERM')
+      };
+    }
+    ```
+
+    **`createMjpegStream()`** — formatea frames JPEG como multipart:
+    ```js
+    function createMjpegStream() {
+      // PassThrough que recibe frames JPEG del decoder
+      // y los emite con headers multipart/x-mixed-replace
+      const stream = new PassThrough();
+      return {
+        stream,
+        pushFrame(jpegBuffer) {
+          stream.write(`--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpegBuffer.length}\r\n\r\n`);
+          stream.write(jpegBuffer);
+          stream.write('\r\n');
+        },
+        end() { stream.end(); }
+      };
+    }
+    ```
+
+15. **Detección automática de plataforma** — `media_capture.js` usa `process.platform`:
+
+    | `process.platform` | Backend ffmpeg input | Notas |
+    |---|---|---|
+    | `darwin` | `-f avfoundation` | macOS, dispositivos indexados (0=primera cámara, :0=primer mic) |
+    | `linux` | `-f v4l2` (video) + `-f pulse` (audio) | Requiere v4l2 y PulseAudio/PipeWire |
+    | `win32` | `-f dshow` | Dispositivos por nombre |
+
+    El módulo lanza un error claro si la plataforma no está soportada o si los
+    dispositivos no se detectan.
 
 ### Phase 5: Signaling Abstraction Layer (ssb-webrtc/)
 
-14. **Interfaz común** — `signaling/transport.js`:
+16. **Interfaz común** — `signaling/transport.js`:
     ```js
     { name, init(config), send(peerId, type, payload), onSignal(cb), listPeers(), destroy() }
     ```
 
-15. **Refactorizar `manual.js`** — Adaptar a la interfaz. En backend-only, `send()` retorna el código, `onSignal()` acepta código via parámetro (no espera paste interactivo).
+17. **Refactorizar `manual.js`** — Adaptar a la interfaz. En backend-only, `send()` retorna el código, `onSignal()` acepta código via parámetro (no espera paste interactivo).
 
 16. **Crear `ssb.js`** — Usa `sbot.private.publish()` (offer/answer/candidate/hangup) + `sbot.webrtc.listen()` (pull-stream live). Tombstone automático post-conexión.
 
@@ -644,6 +1079,8 @@ que mezcla defaults (STUN Google) con overrides del operador (TURN propio/servic
     - Mantener `/webrtc` en las exemptions de sync-check y stats-refresh
     - `/js/` puede que ya no necesite exemption si no hay otros scripts WebRTC
 23. **package.json** — Añadir `node-datachannel` como dependencia.
+    **Nota**: `ffmpeg` NO es una dependencia npm — es un binario del sistema.
+    Se documenta como requisito opcional (solo necesario para modos audio/video).
 
 ---
 
@@ -653,7 +1090,8 @@ que mezcla defaults (STUN Google) con overrides del operador (TURN propio/servic
 
 | Fichero | Descripción | Patrón de referencia |
 |---|---|---|
-| `oasis-main/src/models/webrtc_model.js` | Modelo: PeerConnection + DataChannel + estado en memoria | `tasks_model.js` (factory + cooler), `cipher_model.js` (funciones puras) |
+| `oasis-main/src/models/webrtc_model.js` | Modelo: PeerConnection + DataChannel + media + estado en memoria | `tasks_model.js` (factory + cooler), `cipher_model.js` (funciones puras) |
+| `oasis-main/src/models/media_capture.js` | Captura/reproducción de media vía ffmpeg: startCapture, startDecoder, createMjpegStream, createAudioStream | `cipher_model.js` (funciones puras, sin dependencia SSB) |
 | `ssb-webrtc/signaling/transport.js` | Interfaz abstracta de transporte | Nuevo |
 | `ssb-webrtc/signaling/ssb.js` | Transporte vía SSB private messages | Basado en `ssb-webrtc/index.js` |
 | `ssb-webrtc/signaling/lan.js` | Transporte LAN (wrapper de ssb.js) | Nuevo |
@@ -664,9 +1102,9 @@ que mezcla defaults (STUN Google) con overrides del operador (TURN propio/servic
 
 | Fichero | Cambios | Líneas aprox. |
 |---|---|---|
-| `oasis-main/src/views/webrtc_view.js` | **Reescritura completa**: eliminar IDs/buttons JS, usar `<form>`, renderizado condicional por estado, meta-refresh | 140 → ~180 |
-| `oasis-main/src/backend/backend.js` | Añadir 5 rutas POST, importar webrtcModel, modificar GET /webrtc existente | +~50 líneas (L1713+) |
-| `oasis-main/src/client/assets/styles/webrtc.css` | Eliminar `.webrtc-hidden`, estilos de botones JS; añadir estilos textarea readonly | ~105 → ~90 |
+| `oasis-main/src/views/webrtc_view.js` | **Reescritura completa**: eliminar IDs/buttons JS, usar `<form>`, renderizado condicional por estado, media panel con `<img>`/`<audio>` condicional según mode, controles media como formularios POST, meta-refresh | 140 → ~220 |
+| `oasis-main/src/backend/backend.js` | Añadir 8 rutas (5 POST + 3 GET streaming), importar webrtcModel, modificar GET /webrtc existente | +~80 líneas (L1713+) |
+| `oasis-main/src/client/assets/styles/webrtc.css` | Eliminar `.webrtc-hidden`, estilos de botones JS; mantener `.webrtc-video-grid` (ahora para `<img>`); añadir `.webrtc-audio-player`, estilos textarea readonly | ~105 → ~100 |
 | `oasis-main/src/configs/oasis-config.json` | Añadir `webrtcIceServers` | +3 líneas |
 | `oasis-main/package.json` | Añadir `node-datachannel` | +1 línea |
 | `ssb-webrtc/index.js` | Leer ICE config, integrar con signaling layer | ~80 → ~100 |
@@ -697,6 +1135,18 @@ las ~36 claves WebRTC. Habrá que **revisar** algunas claves que ya no aplican
 | `webrtcCancel` | "Cancel" |
 | `webrtcErrorTitle` | "Error" |
 | `webrtcBackToStart` | "Back to start" |
+| `webrtcModeLabel` | "Mode:" |
+| `webrtcModeData` | "Data Only (chat)" |
+| `webrtcModeAudio` | "Audio + chat" |
+| `webrtcModeVideo` | "Audio/Video + chat" |
+| `webrtcMuteMic` | "Mute Mic" |
+| `webrtcUnmuteMic` | "Unmute Mic" |
+| `webrtcHideCam` | "Hide Cam" |
+| `webrtcShowCam` | "Show Cam" |
+| `webrtcFfmpegRequired` | "ffmpeg is required for audio/video. Install it: brew install ffmpeg (macOS), apt install ffmpeg (Linux)" |
+| `webrtcLocalVideo` | "Local" |
+| `webrtcRemoteVideo` | "Remote" |
+| `webrtcNoMediaDevices` | "No camera or microphone detected" |
 
 ---
 
@@ -845,7 +1295,22 @@ let state = {
   messages: [],         // [{ who: 'You'|'Peer'|'System', text: String, ts: Number }]
   error: null,          // String o null
   transport: 'manual',  // 'manual' | 'ssb'
-  peerId: null          // '@xxx.ed25519' (solo para SSB)
+  peerId: null,         // '@xxx.ed25519' (solo para SSB)
+  // ── Media state ──
+  mode: 'data',         // 'data' | 'audio' | 'video'
+  media: {
+    captureProc: null,  // child_process de ffmpeg captura (mic/cam)
+    decoderVideo: null,  // child_process de ffmpeg decoder vídeo RTP → MJPEG
+    decoderAudio: null,  // child_process de ffmpeg decoder audio RTP → OGG
+    mjpegStream: null,  // PassThrough para endpoint /webrtc/media/video/remote
+    mjpegLocalStream: null, // PassThrough para endpoint /webrtc/media/video/local
+    audioStream: null,  // PassThrough para endpoint /webrtc/media/audio
+    audioTrack: null,   // node-datachannel Audio Track
+    videoTrack: null,   // node-datachannel Video Track
+    micMuted: false,    // true si el mic está muteado (envía silencio)
+    camHidden: false,   // true si la cam está oculta (envía negro)
+    hasFfmpeg: false    // true si ffmpeg está instalado en el sistema
+  }
 };
 
 // Máximo mensajes en buffer
@@ -872,7 +1337,11 @@ function addMessage(who, text) {
     answerCode: state.answerCode,
     messages: messages,
     error: state.error,
-    transport: state.transport
+    transport: state.transport,
+    mode: state.mode,
+    micMuted: state.media.micMuted,
+    camHidden: state.media.camHidden,
+    hasFfmpeg: state.media.hasFfmpeg
   });
 })
 
@@ -880,16 +1349,44 @@ function addMessage(who, text) {
 const webrtcView = (phase = 'idle', data = {}) => {
   const needsRefresh = ['answer-created', 'waiting-answer', 'connected'].includes(phase);
 
-  const idlePanel = (phase === 'idle') ? div({ class: "card" }, /* formularios */) : null;
+  const idlePanel = (phase === 'idle') ? div({ class: "card" }, /* formularios con selector mode */) : null;
   const offerPanel = (phase === 'offer-created') ? div({ class: "card" }, /* offer code */) : null;
   const answerPanel = (phase === 'answer-created') ? div({ class: "card" }, /* answer code */) : null;
   const waitingPanel = (phase === 'waiting-answer') ? div({ class: "card" }, /* waiting msg */) : null;
+
+  // Panel de media — condicional al modo
+  const mediaPanel = (phase === 'connected' && data.mode !== 'data')
+    ? div({ class: "card" },
+        h3("▶ Media"),
+        data.mode === 'video' ? div({ class: "webrtc-video-grid" },
+          div({ class: "webrtc-video-box" }, label("Local"),
+            img({ src: "/webrtc/media/video/local", class: "webrtc-video", alt: "Local" })),
+          div({ class: "webrtc-video-box" }, label("Remote"),
+            img({ src: "/webrtc/media/video/remote", class: "webrtc-video", alt: "Remote" }))
+        ) : null,
+        audio({ src: "/webrtc/media/audio", autoplay: true, controls: true }),
+        div({ class: "webrtc-media-controls" },
+          form({ method: "POST", action: "/webrtc/media/mic/toggle" },
+            button({ type: "submit" }, data.micMuted ? "🎙 Unmute" : "🎙 Mute")),
+          data.mode === 'video'
+            ? form({ method: "POST", action: "/webrtc/media/cam/toggle" },
+                button({ type: "submit" }, data.camHidden ? "📷 Show" : "📷 Hide"))
+            : null
+        )
+      )
+    : null;
+
+  // Aviso si ffmpeg no está instalado y se seleccionó modo media
+  const ffmpegWarning = (phase === 'idle' && !data.hasFfmpeg)
+    ? p({ class: "webrtc-warning" }, i18n.webrtcFfmpegRequired || "ffmpeg is required for audio/video modes")
+    : null;
+
   const chatPanel = (phase === 'connected') ? div({ class: "card" }, /* chat */) : null;
   const errorPanel = (phase === 'error') ? div({ class: "card" }, /* error */) : null;
 
   let pageTpl = template(
     i18n.webrtcTitle || "WebRTC",
-    section(idlePanel, offerPanel, answerPanel, waitingPanel, chatPanel, errorPanel)
+    section(idlePanel, ffmpegWarning, offerPanel, answerPanel, waitingPanel, mediaPanel, chatPanel, errorPanel)
   );
 
   pageTpl = pageTpl.replace('</head>', '<link rel="stylesheet" href="/assets/styles/webrtc.css"></head>');
@@ -923,6 +1420,24 @@ const webrtcView = (phase = 'idle', data = {}) => {
 | 11 | CSRF | POST desde origen externo (curl sin referer) | 400 Bad Request (middleware referer validation) |
 | 12 | Meta-refresh | Estar en estado `connected` | Página se recarga cada 5s mostrando mensajes nuevos |
 
+### Tests de media streams
+
+| # | Test | Cómo verificar | Resultado esperado |
+|---|---|---|---|
+| 12b | ffmpeg check | GET /webrtc sin ffmpeg instalado | Selector mode muestra warning "ffmpeg required" |
+| 12c | Crear sala audio | POST /webrtc/create con mode=audio | Offer SDP incluye audio track (m=audio en SDP) |
+| 12d | Crear sala video | POST /webrtc/create con mode=video | Offer SDP incluye audio + video tracks |
+| 12e | Stream vídeo MJPEG | GET /webrtc/media/video/remote estando connected (mode=video) | Content-Type multipart/x-mixed-replace, frames JPEG llegan |
+| 12f | Stream audio | GET /webrtc/media/audio estando connected (mode=audio) | Content-Type audio/ogg, audio suena en el browser |
+| 12g | Toggle mic | POST /webrtc/media/mic/toggle estando connected | `state.media.micMuted` cambia, botón muestra "Unmute"/"Mute" |
+| 12h | Toggle cam | POST /webrtc/media/cam/toggle estando connected (mode=video) | `state.media.camHidden` cambia, botón muestra "Show"/"Hide" |
+| 12i | Disconnect mata ffmpeg | POST /webrtc/disconnect con media activa | Procesos ffmpeg terminados (no quedan zombis) |
+| 12j | Media sin ffmpeg | POST /webrtc/create con mode=video, sin ffmpeg | Estado `error` con mensaje descriptivo |
+| 12k | Preview local | GET /webrtc/media/video/local estando connected (mode=video) | Stream MJPEG local funciona (preview de lo que envía la cámara) |
+| 12l | Meta-refresh + streams | Estar en connected con media, esperar 5s | Página recarga, streams MJPEG/audio se reconectan sin interrupción visible |
+| 12m | Audio-only mode | Crear sala con mode=audio | Chat + `<audio>` visible, sin grid de vídeo |
+| 12n | Plataforma no soportada | Ejecutar en OS sin backend ffmpeg conocido | Error claro, modo data sigue disponible |
+
 ### Tests entre dos instancias Oasis
 
 | # | Test | Setup | Resultado esperado |
@@ -948,10 +1463,14 @@ const webrtcView = (phase = 'idle', data = {}) => {
 | Decisión | Elección | Justificación |
 |---|---|---|
 | **WebRTC en servidor** | `node-datachannel` (bindings a libdatachannel C++) | Única forma de WebRTC sin JS en cliente. Librería activa, bindings nativos. |
-| **Sin audio/video** | Solo DataChannel (texto) | `getUserMedia` es API exclusiva del navegador. No existe equivalente server-side sin ffmpeg+pulse. Se puede añadir en futuro como feature separada. |
-| **Polling vs SSE** | `<meta http-equiv="refresh" content="5">` | SSE requiere JS (`EventSource`). Meta-refresh es HTML puro. Latencia de 0-5s aceptable para chat. Precedente: `indexing_view.js` usa `content: 10`. |
-| **Estado en memoria** | Singleton en closure del modelo | Oasis es single-user. No necesita base de datos ni sesiones HTTP. Si el proceso muere, la conexión WebRTC muere igual → estado limpio. |
-| **Patrón POST** | Re-render para create/join, PRG para chat/disconnect | Create/join necesitan mostrar códigos inmediatamente (como cipher encrypt). Chat/disconnect son acciones que no generan output → PRG evita re-submit. |
+| **Audio/Video** | ffmpeg captura local + node-datachannel media tracks + MJPEG/OGG HTTP streaming | Oasis es app local — Node.js tiene acceso al mic/cam del usuario. ffmpeg es el estándar de facto para captura/codificación multimedia en todas las plataformas (macOS/Linux/Windows). El browser reproduce nativamente MJPEG (`<img>`) y audio streaming (`<audio>`), sin JavaScript. |
+| **MJPEG para vídeo** | `multipart/x-mixed-replace` sobre `<img>` | Los browsers renderizan MJPEG nativamente sin JS. Mayor ancho de banda que H.264 (~×10) pero aceptable en LAN/localhost. Latencia baja (~100-300ms). Alternativa: H.264 via `<video>` necesitaría MSE (ya requiere JS). |
+| **OGG/Opus para audio** | `<audio>` con HTTP chunked Transfer-Encoding | Buen balance latencia/calidad/ancho de banda. Soporte Chrome+Firefox nativo. Fallback a MP3 para Safari antiguo. |
+| **ffmpeg como dependencia optativa** | Solo necesario para modes audio/video | El modo `data` (solo chat) funciona sin ffmpeg. Audio/video son opt-in. Instalación trivial en los 3 OS mayoritarios. |
+| **Mute/hide sin JS** | Formularios POST que pausan pipe ffmpeg | ffmpeg sigue corriendo pero recibe silencio/negro. Evita cerrar el track WebRTC (no requiere renegociación SDP). Latencia del toggle: 1 round-trip HTTP. |
+| **Polling vs SSE** | `<meta http-equiv="refresh" content="5">` | SSE requiere JS (`EventSource`). Meta-refresh es HTML puro. Latencia de 0-5s aceptable para chat. Las conexiones de streams media se reconectan automáticamente al recargar. |
+| **Estado en memoria** | Singleton en closure del modelo | Oasis es single-user. No necesita base de datos ni sesiones HTTP. Si el proceso muere, la conexión WebRTC muere igual → estado limpio. Los procesos ffmpeg se matan en el cleanup. |
+| **Patrón POST** | Re-render para create/join, PRG para chat/disconnect/toggle | Create/join necesitan mostrar códigos inmediatamente (como cipher encrypt). Chat/disconnect/toggle son acciones que no generan output → PRG evita re-submit. |
 | **Multi-transporte** | manual, ssb-conn, ssb-lan, socket.io | Todos intercambiables vía selectSignaling layer. Manual es el primero. |
 | **ICE config** | Defaults en plugin + override en oasis-config.json | Merge de arrays: config del operador prevalece. |
 | **Tipo de mensaje SSB** | Configurable: `webrtc-signal` (default) o `post` | Flexibilidad para redes SSB que filtran tipos desconocidos. |
@@ -962,25 +1481,45 @@ const webrtcView = (phase = 'idle', data = {}) => {
 
 ## Consideraciones futuras
 
-### 1. Audio/Video
+### 1. Calidad de vídeo MJPEG vs. codecs modernos
 
-`getUserMedia()` es una API exclusiva del navegador — **no existe en Node.js**.
-Para soportar audio/video en backend-only se necesitaría:
+MJPEG consume ~10x más ancho de banda que H.264/VP8 para la misma calidad. Esto
+es aceptable en LAN o localhost, pero para conexiones remotas con ancho de banda
+limitado puede ser un problema.
 
-- **Opción A**: ffmpeg + PulseAudio/ALSA para captura server-side → complejamente inviable para el caso de uso (cada usuario tendría que tener un micrófono/cámara conectado al servidor)
-- **Opción B**: GStreamer con `node-datachannel` media support → mismo problema
-- **Opción C**: Aceptar JS mínimo **solo** para audio/video (`getUserMedia` + `<video>`) mientras el signaling y DataChannel siguen siendo backend-only. Esto requeriría una excepción a la política "zero JS".
+**Opciones de mejora futura**:
+- **Reducir calidad MJPEG**: `-q:v 10` (baja) en vez de `-q:v 5` (media) reduce
+  el ancho de banda ~50% con pérdida visible de calidad
+- **Reducir resolución**: `-s 320x240` en vez de resolución nativa de la cámara
+- **Reducir framerate**: `-r 10` (10 fps) en vez de 30 fps
+- **H.264 sobre `<video>` sin JS**: Teóricamente posible con fMP4 (fragmented MP4)
+  servido por HTTP chunked → `<video src="/webrtc/media/video">`. Requiere
+  investigar compatibilidad cross-browser sin MSE.
 
-**Recomendación**: Dejar audio/video fuera del scope inicial. El valor principal del módulo es chat P2P cifrado sin servidores intermedios. Si en el futuro se quiere audio/video, discutir opciones con mantenedores.
+**Configuración recomendada por escenario**:
 
-### 2. Latencia del meta-refresh
+| Escenario | Resolución | FPS | Calidad | Ancho de banda aprox. |
+|---|---|---|---|---|
+| Localhost (2 instancias) | 640x480 | 15 | q:v 5 | ~2 Mbps |
+| LAN | 640x480 | 15 | q:v 5 | ~2 Mbps |
+| Internet (STUN) | 320x240 | 10 | q:v 8 | ~500 Kbps |
+| Internet (TURN relay) | 320x240 | 10 | q:v 10 | ~300 Kbps |
 
-El polling cada 5 segundos introduce latencia de 0-5s en mensajes entrantes.
+Estas configuraciones podrían exponerse en `oasis-config.json` → `webrtcVideoQuality`.
+
+### 2. Latencia del meta-refresh y media
+
+El polling cada 5 segundos introduce latencia de 0-5s en mensajes entrantes del chat.
 Esto es aceptable para chat asíncrono pero no para conversaciones en tiempo real.
 
-- Se podría reducir a 2-3 segundos (más tráfico HTTP)
-- Se podría hacer configurable en oasis-config.json
-- Es un tradeoff explícito: **sin JS = sin WebSocket/SSE = sin push en tiempo real**
+Para los **streams de media**, la reconexión tras meta-refresh es ~100ms (el stream
+ya está preparado en el servidor). El impacto visible es mínimo: un breve flash
+en el `<img>` MJPEG. El `<audio>` puede tener un micro-corte de ~200ms.
+
+**Opciones**:
+- Reducir meta-refresh a 2-3 segundos (más tráfico HTTP, menos cortes)
+- Hacer configurable en oasis-config.json: `webrtcRefreshInterval: 5`
+- Tradeoff explícito: **sin JS = sin WebSocket/SSE = sin push en tiempo real**
 
 ### 3. NAT traversal / TURN
 
@@ -989,14 +1528,20 @@ La config actual solo usa STUN (Google), cubre ~80% de NATs domésticos.
 Para conectividad universal se necesita TURN (coturn, Metered.ca, Xirsys).
 Se configura en Phase 2 vía `oasis-config.json` → `webrtcIceServers`.
 
+**Nota sobre media y TURN**: Los streams de audio/vídeo vía TURN consumen ancho
+de banda del relay. MJPEG con TURN requiere un TURN server con buena capacidad.
+Reducir calidad de vídeo es crítico cuando se usa TURN.
+
 ### 4. Concurrencia
 
 Oasis es single-user pero podría recibir múltiples requests simultáneas
-(e.g., meta-refresh mientras el usuario hace POST). El modelo debe ser
-thread-safe en su gestión de estado. Node.js es single-threaded por defecto,
-así que esto no es un problema real, pero las operaciones async del modelo
-(createOffer, processAnswer) deben evitar race conditions con locks simples
-o flags de "operación en curso".
+(e.g., meta-refresh mientras el usuario hace POST, más las conexiones abiertas
+de los streams MJPEG/audio). El modelo debe ser thread-safe en su gestión de
+estado. Node.js es single-threaded por defecto, así que esto no es un problema
+real. Las conexiones de streaming son long-lived pero read-only (consumen del
+PassThrough del decoder). El único riesgo es que un `disconnect()` mate los
+procesos ffmpeg mientras un stream HTTP está sirviéndolos — se maneja con
+cleanup del PassThrough que cierra la conexión HTTP limpiamente.
 
 ### 5. Persistencia de mensajes
 
@@ -1020,7 +1565,8 @@ Los mensajes se pierden al reiniciar Oasis. Opciones:
 - `form-action 'self'` ya está configurado → los formularios POST funcionan
 - `script-src 'self'` sigue en CSP pero no se usa para WebRTC (no hay scripts)
 - No se necesita `connect-src` (no hay fetch/XHR/SSE/WebSocket)
-- **No se requieren cambios en CSP** para la implementación backend-only
+- `img-src 'self'` debe permitir las rutas de streaming MJPEG (son `'self'`)
+- **No se requieren cambios en CSP** para la implementación backend-only con media
 
 ### 8. Llamada entrante (SSB mode)
 
@@ -1030,3 +1576,25 @@ lo detecta. ¿Cómo notificar al usuario sin JS?
 - **Opción A**: El usuario visita /webrtc y ve "Llamada entrante de @peer" + botón "Aceptar"
 - **Opción B**: Banner en cualquier página de Oasis (requiere modificar template global)
 - **Recomendación**: Opción A para el scope inicial. El usuario debe visitar /webrtc periódicamente o tener la pestaña abierta con meta-refresh.
+
+### 9. Selección de dispositivos de captura
+
+En la primera versión se usa el dispositivo por defecto del sistema (device "0"
+en avfoundation, `/dev/video0` en Linux, etc.). Para futuras versiones:
+
+- `media_capture.listDevices()` ya enumera los dispositivos disponibles
+- Se podría añadir un selector `<select name="camera">` / `<select name="mic">`
+  en el formulario de `/webrtc/create`
+- Los IDs se pasan a ffmpeg: `-i "1:2"` (avfoundation) o `-i /dev/video1` (v4l2)
+- Configurar defaults en `oasis-config.json` → `webrtcDefaultCamera`, `webrtcDefaultMic`
+
+### 10. Screensharing
+
+ffmpeg puede capturar la pantalla del sistema:
+- macOS: `-f avfoundation -i "Capture screen 0"`
+- Linux: `-f x11grab -i :0.0`
+- Windows: `-f gdigrab -i desktop`
+
+Esto se podría añadir como un modo adicional (`mode=screen`). El pipeline es
+idéntico al video: ffmpeg captura → RTP → node-datachannel → MJPEG HTTP → `<img>`.
+No requiere ningún cambio arquitectónico, solo un nuevo valor en el selector de modo.
