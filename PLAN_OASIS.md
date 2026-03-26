@@ -1,3 +1,7 @@
+NOTA: EN LA RAMA oasis-pr hay una implementación no segura js en cliente.
+
+[https://github.com/escrivivir-co/simple-ssb-webrtc/commit/36106a959137d6ea252c2f0b53bda83a31490d12](https://github.com/escrivivir-co/simple-ssb-webrtc/commit/36106a959137d6ea252c2f0b53bda83a31490d12)
+
 # Plan: Backend-Only WebRTC (sin JavaScript en cliente)
 
 > **Decisión arquitectónica**: Todo el WebRTC se ejecuta en el servidor Node.js
