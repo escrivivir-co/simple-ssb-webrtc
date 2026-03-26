@@ -18,6 +18,19 @@
 
 ---
 
+> ### 🔍 Convención de revisión
+>
+> Los bloques marcados con **⚠️ REVISIÓN** contienen observaciones de una
+> auditoría técnica externa. Cada bloque:
+> 1. Identifica el contenido original que precede al warning.
+> 2. Explica la objeción o mejora propuesta.
+> 3. Propone una alternativa concreta y validada.
+>
+> El contenido original **no se elimina**: permanece tal cual para trazabilidad.
+> Las propuestas son adiciones, no parches.
+
+---
+
 ## Índice
 
 1. [Arquitectura general](#arquitectura-general)
@@ -129,6 +142,55 @@
 | Seguridad CSRF | Vulnerable (JS en localhost) | Protegido (referer validation + CSP form-action) |
 | Complejidad cliente | ~370 líneas JS (webrtc-app.js) | 0 líneas JS |
 
+> ⚠️ **REVISIÓN — Endurecimiento CSRF: Referer estricto + SameSite cookies**
+>
+> La tabla anterior cita "referer validation + CSP form-action" como protección
+> CSRF. Esto es correcto pero incompleto. Un atacante en otra pestaña podría
+> ejecutar un formulario cross-origin si el navegador no envía Referer (algunos
+> proxies lo eliminan).
+>
+> **Propuesta — defensa en profundidad**:
+>
+> 1. **Referer check estricto**: en el middleware Koa, rechazar todo POST a
+>    `/webrtc/*` cuyo `Referer` header no sea exactamente `http://localhost:PORT`
+>    o `http://127.0.0.1:PORT`. Si el header está ausente, rechazar también
+>    (política estricta, no permisiva):
+>    ```js
+>    // En backend.js, antes de las rutas /webrtc POST:
+>    router.use('/webrtc', (ctx, next) => {
+>      if (ctx.method === 'POST') {
+>        const ref = ctx.get('referer') || '';
+>        const origin = `http://localhost:${ctx.app.port}`;
+>        const originAlt = `http://127.0.0.1:${ctx.app.port}`;
+>        if (!ref.startsWith(origin) && !ref.startsWith(originAlt)) {
+>          ctx.status = 403;
+>          ctx.body = 'Forbidden: invalid referer';
+>          return;
+>        }
+>      }
+>      return next();
+>    });
+>    ```
+>
+> 2. **Cookie `SameSite=Strict`**: si Oasis ya usa cookies de sesión (o si se
+>    introduce una para el zombie timeout), configurarlas con `SameSite=Strict`.
+>    Esto impide que el navegador envíe la cookie en requests cross-origin
+>    (incluyendo formularios desde otras pestañas/dominios):
+>    ```js
+>    ctx.cookies.set('oasis-session', value, {
+>      httpOnly: true,
+>      sameSite: 'strict',
+>      secure: false  // localhost no usa HTTPS
+>    });
+>    ```
+>
+> 3. **CSP `form-action 'self'`**: ya existente en Oasis, refuerza que los
+>    formularios solo pueden hacer POST a `'self'`. Mantener sin cambios.
+>
+> Las tres capas son complementarias: Referer bloquea en el servidor, SameSite
+> bloquea en el navegador, CSP bloquea en el DOM. Un atacante necesitaría
+> saltarse las tres simultáneamente.
+
 ### Transporte de señalización
 
 | Transporte | Escenario | Tipo msg SSB | Requisitos |
@@ -221,6 +283,40 @@
   └───────────────────────────┘
 ```
 
+> ⚠️ **REVISIÓN — Aceleración por hardware en el encoding de transporte**
+>
+> El pipeline anterior muestra `-c:v vp8` como codec de transporte. VP8 en
+> software consume CPU significativa (~30-50% de un core a 640x480@15fps).
+>
+> **Propuesta**: usar codificadores H.264 acelerados por hardware donde estén
+> disponibles. Esto reduce la carga de CPU drásticamente (~5%) y deja margen
+> para la decodificación MJPEG simultánea:
+>
+> | OS | Encoder HW | Flag ffmpeg | Fallback SW |
+> |---|---|---|---|
+> | **macOS** | VideoToolbox | `-c:v h264_videotoolbox` | `-c:v libx264 -preset ultrafast` |
+> | **Linux** (Intel/AMD) | VA-API | `-c:v h264_vaapi` | `-c:v libx264 -preset ultrafast` |
+> | **Linux** (NVIDIA) | NVENC | `-c:v h264_nvenc` | `-c:v libx264 -preset ultrafast` |
+> | **Windows** | MediaFoundation | `-c:v h264_mf` | `-c:v libx264 -preset ultrafast` |
+>
+> **Nota importante**: la aceleración HW aplica al codec de **transporte WebRTC**
+> (H.264 sobre DTLS-SRTP), no al formato **HTTP de salida** (MJPEG para `<img>`).
+> El decoder remoto sigue emitiendo MJPEG para compatibilidad con `<img>`. El
+> beneficio es reducir CPU en el peer que **envía** vídeo.
+>
+> **Detección en `media_capture.js`**: ejecutar `ffmpeg -encoders 2>/dev/null |
+> grep h264` al inicio y elegir el encoder más eficiente disponible, con fallback
+> a `libx264 -preset ultrafast` (software) si no hay HW.
+>
+> **Además — piping directo por stdout**: en vez de RTP sobre UDP localhost
+> (`rtp://127.0.0.1:PORT`), se puede usar piping directo:
+> ```
+> ffmpeg -f avfoundation -i "default:default" -c:v h264_videotoolbox -f rtp pipe:1
+> ```
+> Esto elimina la necesidad de un socket UDP local y simplifica el wiring con
+> `node-datachannel`. El child_process.stdout es un readable stream que se
+> alimenta directamente a `track.sendMessage()`.
+
 ### Captura por sistema operativo
 
 ffmpeg detecta los dispositivos de entrada según el OS. `media_capture.js` auto-
@@ -231,6 +327,46 @@ detecta la plataforma (`process.platform`) y usa el backend correcto:
 | **macOS** | `avfoundation` | `ffmpeg -f avfoundation -i "0" -c:v vp8 -f rtp rtp://...` | `ffmpeg -f avfoundation -i ":0" -c:a libopus -f rtp rtp://...` | `ffmpeg -f avfoundation -list_devices true -i ""` |
 | **Linux** | `v4l2` + `pulse` | `ffmpeg -f v4l2 -i /dev/video0 -c:v vp8 -f rtp rtp://...` | `ffmpeg -f pulse -i default -c:a libopus -f rtp rtp://...` | `v4l2-ctl --list-devices` + `pactl list sources` |
 | **Windows** | `dshow` | `ffmpeg -f dshow -i video="Camera" -c:v vp8 -f rtp rtp://...` | `ffmpeg -f dshow -i audio="Mic" -c:a libopus -f rtp rtp://...` | `ffmpeg -f dshow -list_devices true -i dummy` |
+
+> ⚠️ **REVISIÓN — Matriz de captura: inputs por defecto y variantes de audio**
+>
+> La tabla anterior usa `"0"` / `":0"` (avfoundation) y `/dev/video0` (Linux).
+> Estos índices son frágiles: cambian si se conecta un segundo dispositivo.
+>
+> **Correcciones propuestas**:
+>
+> 1. **macOS**: usar `"default:default"` en lugar de `"0:0"`. avfoundation
+>    resuelve el dispositivo por defecto del sistema sin depender del índice:
+>    ```
+>    ffmpeg -f avfoundation -i "default:default" -c:v ... -c:a ...
+>    ```
+>
+> 2. **Linux — audio**: la tabla muestra `-f pulse` (PulseAudio). En distros
+>    modernas PulseAudio corre sobre PipeWire, pero en sistemas mínimos (servers,
+>    containers) puede no existir. Considerar fallback a ALSA:
+>    ```
+>    # PulseAudio/PipeWire (preferido, más común en desktops):
+>    ffmpeg -f pulse -i default ...
+>    # ALSA fallback (sistemas sin PulseAudio):
+>    ffmpeg -f alsa -i default ...
+>    ```
+>    `media_capture.js` debería probar `pactl info` para detectar PulseAudio;
+>    si falla, usar ALSA.
+>
+> 3. **Enumeración de dispositivos al arranque**: ejecutar `listDevices()` una
+>    sola vez al cargar el módulo WebRTC (no en cada request). Cachear el
+>    resultado en `state.media.availableDevices`. Esto permite:
+>    - Mostrar selector `<select name="camera">` en la vista idle (futuro)
+>    - Detectar "no hay cámara/mic" antes de intentar la captura
+>    - Evitar latencia de spawn ffmpeg en cada request
+>
+> **Tabla corregida (propuesta)**:
+>
+> | OS | Input cámara | Input mic | Detección |
+> |---|---|---|---|
+> | **macOS** | `-i "default:default"` | (incluido en el mismo input) | `-list_devices true -i ""` |
+> | **Linux** | `-f v4l2 -i /dev/video0` | `-f pulse -i default` (fallback: `-f alsa -i default`) | `v4l2-ctl --list-devices` + `pactl list sources` (fallback: `arecord -l`) |
+> | **Windows** | `-f dshow -i video="Camera"` | `-f dshow -i audio="Mic"` | `-list_devices true -i dummy` |
 
 ### Reproducción en el navegador sin JavaScript
 
@@ -287,6 +423,34 @@ Formatos posibles (por orden de preferencia):
 
 **Recomendación**: OGG/Opus como default (buen balance latencia/calidad/ancho de
 banda). Fallback a MP3 si el browser no soporta Opus (Edge antiguo, Safari <15).
+
+> ⚠️ **REVISIÓN — WAV/PCM como default en localhost**
+>
+> La recomendación anterior elige OGG/Opus como formato por defecto. Para
+> conexiones **remotas** (Internet/LAN), es la elección correcta: ~48 kbps para
+> calidad excelente.
+>
+> Sin embargo, Oasis es primariamente una **app local** (navegador y servidor en
+> la misma máquina). En localhost, el ancho de banda es infinito y la prioridad
+> es minimizar latencia. WAV/PCM tiene ~50ms de latencia vs. ~200ms de OGG/Opus,
+> porque no necesita decodificación — el browser reproduce los samples crudos.
+>
+> **Propuesta**: selección condicional del formato según el escenario:
+>
+> | Escenario | Formato recomendado | Motivo |
+> |---|---|---|
+> | **Localhost** (ambos peers misma máquina) | **WAV/PCM** | Latencia mínima (~50ms), BW irrelevante (~1.4 Mbps, todo local) |
+> | **LAN** (misma red) | **OGG/Opus** o **WAV/PCM** | LAN soporta 1.4 Mbps sin problema, pero Opus es más eficiente |
+> | **Internet** (STUN/TURN) | **OGG/Opus** | Ancho de banda limitado — 1.4 Mbps de PCM inviable por TURN |
+>
+> **Implementación**: `media_capture.js` acepta un parámetro `audioFormat` en
+> `startDecoder()`. El modelo elige según si la conexión usa TURN (remoto) o
+> candidato host/srflx (local/LAN). Valor por defecto: `'wav'` para la primera
+> versión (solo se usa en localhost). Se expone en `oasis-config.json` →
+> `webrtcAudioFormat: "wav" | "ogg" | "mp3"`.
+>
+> **Coste**: WAV/PCM 16-bit 44.1kHz stereo = ~1.4 Mbps. Mono 16kHz (suficiente
+> para voz) = ~256 kbps. Incluso reducido, irrelevante en localhost/LAN.
 
 ### Modos de llamada
 
@@ -625,6 +789,88 @@ siguiendo el patrón de `cipher_view.js` (argumentos determinan qué mostrar).
 </section>
 ```
 
+> ⚠️ **REVISIÓN — `<iframe>` para preservar scroll, foco e input del chat**
+>
+> El diseño anterior usa `<meta http-equiv="refresh" content="5">` en la página
+> completa. Esto recarga **todo**: el formulario de chat pierde el texto que el
+> usuario estaba escribiendo, el scroll de mensajes vuelve arriba, y si había
+> media streams (`<img>` MJPEG, `<audio>`), se cierran y reconectan (~100-200ms
+> de interrupción visible).
+>
+> **Propuesta**: mover el panel de chat a un `<iframe>` interno. Solo el iframe
+> lleva `<meta refresh>`. La página padre permanece estática (sin refresh):
+>
+> ```html
+> <!-- Página padre /webrtc — SIN meta-refresh -->
+> <section>
+>   <div class="card">
+>     <h3>☍ Conectado</h3>
+>     <p>Estado: connected | DataChannel: open | Modo: video</p>
+>   </div>
+>
+>   <!-- Media panel: NO se recarga, streams MJPEG/audio permanecen abiertos -->
+>   <div class="card">
+>     <h3>▶ Media</h3>
+>     <img src="/webrtc/media/video/local" class="webrtc-video" alt="Local">
+>     <img src="/webrtc/media/video/remote" class="webrtc-video" alt="Remote">
+>     <audio src="/webrtc/media/audio" autoplay controls></audio>
+>     <!-- Controles media siguen como formularios POST normales -->
+>   </div>
+>
+>   <!-- Chat: iframe con su propio meta-refresh -->
+>   <iframe
+>     src="/webrtc/chat"
+>     name="chatframe"
+>     class="webrtc-chat-frame"
+>     style="width:100%; height:400px; border:1px solid #ccc;">
+>   </iframe>
+>
+>   <!-- Disconnect sigue en la página padre -->
+>   <form method="POST" action="/webrtc/disconnect">
+>     <button type="submit">Desconectar</button>
+>   </form>
+> </section>
+> ```
+>
+> ```html
+> <!-- Endpoint GET /webrtc/chat — renderizado DENTRO del iframe -->
+> <meta http-equiv="refresh" content="3">
+> <div class="webrtc-chat-messages">
+>   <div class="webrtc-chat-msg"><span class="webrtc-chat-you">You:</span> hola</div>
+>   <div class="webrtc-chat-msg"><span class="webrtc-chat-peer">Peer:</span> hola!</div>
+> </div>
+> <form method="POST" action="/webrtc/chat/send" target="chatframe">
+>   <input type="text" name="message" placeholder="Escribe..." autocomplete="off">
+>   <button type="submit">Enviar</button>
+> </form>
+> ```
+>
+> **Ventajas**:
+> - El scroll de chat se preserva (solo el iframe recarga, no la página)
+> - El texto en el input del formulario **no se pierde** al hacer refresh
+>   (el refresh del iframe recarga su contenido, pero el campo del formulario
+>   se puede preservar con `target="chatframe"` — el POST va al iframe, no a
+>   la página padre)
+> - Los streams MJPEG y `<audio>` **nunca se interrumpen** (viven en la página
+>   padre que no recarga)
+> - Compatible al 100% con la filosofía "sin JS": `<iframe>`, `<meta refresh>`,
+>   y `target` son HTML puro
+> - Se puede reducir el refresh interval a 2-3s sin penalizar la UX (solo recarga
+>   el iframe ligero, no todo el DOM)
+>
+> **Impacto en implementación**:
+> - Nueva ruta `GET /webrtc/chat` que renderiza solo el panel de chat (sin
+>   template/layout wrapper — HTML minimal para el iframe)
+> - `POST /webrtc/chat/send` redirige a `GET /webrtc/chat` (no a `GET /webrtc`)
+> - `webrtc_view.js` renderiza la página padre con el `<iframe>` en vez del
+>   chat inline
+> - CSS: añadir `.webrtc-chat-frame` (dimensiones, scroll interno)
+>
+> **Nota**: el `target="chatframe"` en el formulario de envío hace que la
+> respuesta del POST (redirect a GET /webrtc/chat) se cargue dentro del iframe.
+> El usuario escribe, pulsa Enter/Enviar, y solo el iframe recarga mostrando el
+> mensaje nuevo. El resto de la página permanece intacto.
+
 ---
 
 ## ICE / STUN / TURN
@@ -731,6 +977,41 @@ que mezcla defaults (STUN Google) con overrides del operador (TURN propio/servic
    - Si el proceso se reinicia, se pierde el estado → `phase: 'idle'`
    - Los mensajes se acumulan en un array en memoria (no persisten en SSB)
    - Máximo ~1000 mensajes en buffer, FIFO si se excede
+
+   > ⚠️ **REVISIÓN — Limpieza de sesiones zombie y concurrencia de pestañas**
+   >
+   > El punto anterior asume que el usuario siempre desconecta limpiamente
+   > (`POST /webrtc/disconnect`). En la práctica, el usuario puede:
+   > - Cerrar la pestaña del navegador sin pulsar "Desconectar"
+   > - Perder conectividad de red
+   > - Dejar la sesión abierta indefinidamente
+   >
+   > En estos casos, los procesos ffmpeg y el PeerConnection se quedan huérfanos
+   > (zombies), consumiendo CPU y manteniendo el estado en `connected` para
+   > siempre.
+   >
+   > **Propuesta — timeout de inactividad**:
+   > - El modelo registra `state.lastHttpActivity = Date.now()` en cada request
+   >   a rutas `/webrtc/*` (GET o POST).
+   > - Un `setInterval` cada 30s comprueba: si `Date.now() - lastHttpActivity >
+   >   ZOMBIE_TIMEOUT_MS` (ej. 60000ms = 1 minuto), ejecuta `disconnect()`
+   >   automáticamente.
+   > - Esto mata ffmpeg, cierra PeerConnection, y resetea a `idle`.
+   > - El meta-refresh cada 5s actúa como "heartbeat" — si el usuario tiene la
+   >   pestaña abierta, `lastHttpActivity` se renueva cada 5s.
+   > - Configurable: `oasis-config.json` → `webrtcZombieTimeoutMs: 60000`
+   >
+   > **Propuesta — sesiones concurrentes (múltiples pestañas)**:
+   > - Oasis es single-user pero el usuario puede abrir `/webrtc` en 2+ pestañas.
+   > - Actualmente, ambas pestañas ven el mismo estado (singleton en closure).
+   > - Problema: si una pestaña hace `POST /webrtc/disconnect` mientras la otra
+   >   muestra `connected`, la segunda queda desincronizada hasta su refresh.
+   > - Opción conservadora (recomendada): no cambiar nada — el singleton es
+   >   correcto para single-user. La segunda pestaña simplemente refleja el
+   >   mismo estado tras su próximo refresh.
+   > - Opción avanzada: un cookie `sessionId` que identifica la pestaña activa.
+   >   Solo la pestaña que creó la sesión puede hacer `disconnect`. Las otras
+   >   son read-only. Complejidad adicional, beneficio marginal para single-user.
 
 3. **API de `node-datachannel`** — Diferencias con la WebRTC browser API:
    ```js
@@ -925,6 +1206,13 @@ que mezcla defaults (STUN Google) con overrides del operador (TURN propio/servic
     cierran y reabren. Esto es aceptable: ffmpeg sigue capturando/decodificando
     en background, y el browser reconecta al endpoint inmediatamente. La latencia
     de reconexión es ~100ms porque el stream ya está preparado en el servidor.
+
+    > ⚠️ **REVISIÓN — Véase propuesta `<iframe>`**: La sección "Estado connected"
+    > incluye una propuesta para mover el chat a un `<iframe>` con su propio
+    > meta-refresh. Si se adopta, el meta-refresh **no se aplica** a la página
+    > padre — solo al iframe del chat. Los streams MJPEG/audio dejan de
+    > interrumpirse por completo. El punto 11 simplificaría a: "Meta-refresh
+    > solo en el iframe de chat (`GET /webrtc/chat`), no en la página principal."
 
 12. **Sin `<script>` tag** — La línea actual que inyecta `webrtc-app.js` se elimina:
     ```js
@@ -1324,6 +1612,29 @@ function addMessage(who, text) {
 }
 ```
 
+> ⚠️ **REVISIÓN — Campo `lastHttpActivity` para detección de zombies**
+>
+> Si se adopta la propuesta de limpieza de zombies (ver Phase 1, punto 2),
+> el estado singleton debe incluir:
+> ```js
+> let state = {
+>   // ... campos existentes ...
+>   lastHttpActivity: Date.now(),  // timestamp del último request HTTP a /webrtc/*
+> };
+>
+> // En el init del módulo:
+> const ZOMBIE_TIMEOUT_MS = config.webrtcZombieTimeoutMs || 60000;
+> setInterval(() => {
+>   if (state.phase !== 'idle' && Date.now() - state.lastHttpActivity > ZOMBIE_TIMEOUT_MS) {
+>     disconnect(); // mata ffmpeg, cierra PeerConnection, resetea a idle
+>   }
+> }, 30000);
+> ```
+>
+> Cada ruta `/webrtc/*` actualiza `state.lastHttpActivity = Date.now()` al
+> inicio del handler. El meta-refresh cada 5s (o el iframe refresh cada 3s)
+> actúa como heartbeat automático.
+
 ### Integración con vista — patrón cipher_view.js
 
 ```js
@@ -1477,6 +1788,17 @@ const webrtcView = (phase = 'idle', data = {}) => {
 | **Tombstone** | Automático post-conexión (SSB mode) | Evita acumulación de señales obsoletas en el log SSB. |
 | **Buffer mensajes** | 1000 max, FIFO | Previene memory leak en chats largos. No persiste a disco. |
 
+> ⚠️ **REVISIÓN — Decisiones adicionales propuestas por auditoría**
+>
+> | Decisión | Elección propuesta | Justificación |
+> |---|---|---|
+> | **CSRF hardening** | Referer estricto + SameSite=Strict + CSP form-action | Defensa en profundidad. Ver sección "Diferencias clave" para detalle. |
+> | **Zombie timeout** | `setInterval` 30s, disconnect si inactividad > 60s | Evita procesos ffmpeg huérfanos. Configurable en oasis-config.json. |
+> | **Audio localhost** | WAV/PCM por defecto en localhost, OGG/Opus para remoto | Latencia mínima (~50ms) en el caso de uso primario (app local). |
+> | **Chat en iframe** | `<iframe src="/webrtc/chat">` con meta-refresh propio | Preserva scroll, input, y streams media. 100% HTML sin JS. |
+> | **HW video encoding** | h264_videotoolbox / h264_vaapi con fallback SW | Reduce CPU ~90% en la captura de vídeo. Detección automática. |
+> | **Device defaults** | `"default:default"` (macOS), auto-detect (Linux) | Más robusto que índices numéricos ("0:0"). |
+
 ---
 
 ## Consideraciones futuras
@@ -1507,6 +1829,17 @@ limitado puede ser un problema.
 
 Estas configuraciones podrían exponerse en `oasis-config.json` → `webrtcVideoQuality`.
 
+> ⚠️ **REVISIÓN — HW acceleration reduce el coste de este tradeoff**
+>
+> Si se adopta `h264_videotoolbox` / `h264_vaapi` para el encoding de transporte
+> WebRTC (ver propuesta en "Pipeline completo"), el cuello de botella de CPU se
+> desplaza del encoding al decoding MJPEG. Esto permite:
+> - Subir resolución/fps sin saturar CPU (el encoding ya no es el bottleneck)
+> - Dedicar más CPU al decoder MJPEG (que no tiene aceleración HW estándar)
+> - La opción futura de fMP4/H.264 sobre `<video>` se vuelve más atractiva:
+>   el decoder HW del **navegador** haría todo el trabajo, y el servidor solo
+>   actúa como proxy de los paquetes H.264 que ya recibió por WebRTC
+
 ### 2. Latencia del meta-refresh y media
 
 El polling cada 5 segundos introduce latencia de 0-5s en mensajes entrantes del chat.
@@ -1520,6 +1853,18 @@ en el `<img>` MJPEG. El `<audio>` puede tener un micro-corte de ~200ms.
 - Reducir meta-refresh a 2-3 segundos (más tráfico HTTP, menos cortes)
 - Hacer configurable en oasis-config.json: `webrtcRefreshInterval: 5`
 - Tradeoff explícito: **sin JS = sin WebSocket/SSE = sin push en tiempo real**
+
+> ⚠️ **REVISIÓN — La propuesta `<iframe>` resuelve esta sección**
+>
+> Si se adopta el diseño con `<iframe>` para el chat (ver "Estado connected"),
+> este problema desaparece en gran medida:
+> - Los streams MJPEG/audio **nunca se interrumpen** (viven en la página padre)
+> - Solo el iframe del chat recarga cada 3-5s (HTML ligero, ~1 KB)
+> - El flash/micro-corte de media citado arriba ya no ocurre
+> - La latencia del chat sigue siendo 0-5s, pero sin penalizar la UX de media
+>
+> La configurabilidad del refresh interval sigue siendo útil, pero ahora solo
+> afecta al iframe del chat, no a toda la página.
 
 ### 3. NAT traversal / TURN
 
@@ -1542,6 +1887,16 @@ real. Las conexiones de streaming son long-lived pero read-only (consumen del
 PassThrough del decoder). El único riesgo es que un `disconnect()` mate los
 procesos ffmpeg mientras un stream HTTP está sirviéndolos — se maneja con
 cleanup del PassThrough que cierra la conexión HTTP limpiamente.
+
+> ⚠️ **REVISIÓN — Véase propuesta zombie timeout en Phase 1, punto 2**
+>
+> El riesgo de concurrencia más grave no es el threading (correcto: Node.js es
+> single-threaded) sino las **sesiones zombie**: el usuario cierra la pestaña
+> y los procesos ffmpeg + PeerConnection quedan vivos indefinidamente. La
+> propuesta de `lastHttpActivity` + `setInterval` cleanup resuelve esto.
+> Además, si se adopta el `<iframe>`, el `disconnect()` durante streaming activo
+> es más limpio: la página padre con los streams se cierra normalmente, y el
+> iframe deja de hacer requests (dejando de renovar el heartbeat).
 
 ### 5. Persistencia de mensajes
 
