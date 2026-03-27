@@ -42,6 +42,14 @@ NOTA: EN LA RAMA oasis-pr hay una implementación no segura js en cliente.
 3. [Flujo de datos detallado](#flujo-de-datos-detallado)
 4. [Estados de la vista](#estados-de-la-vista)
 5. [ICE / STUN / TURN](#ice--stun--turn)
+   - [State of the art STUN/TURN (marzo 2026)](#state-of-the-art-stunturn-marzo-2026)
+   - [coturn: guía de despliegue rápido](#coturn-guía-de-despliegue-rápido-2026)
+   - [Metered.ca Open Relay](#meteredca-open-relay-opción-plug--play-para-oasis)
+   - [Mejores prácticas configuración ICE](#mejores-prácticas-de-configuración-ice-2026)
+   - [Aplicación a Oasis](#aplicación-a-oasis-configuración-por-defecto-y-overrides)
+   - [Opción A: oasis-full — coturn co-ubicado en pubs](#opción-a-oasis-full--coturn-co-ubicado-en-pubs-ssb)
+   - [Opción B: FOSS/FSF — sin Google, sin comercial](#opción-b-fossfsf--sin-google-sin-servicios-comerciales)
+   - [Comparativa final: oasis-full vs. FOSS/FSF](#comparativa-final-oasis-full-vs-fossfsf)
 6. [Steps (Phases)](#steps)
 7. [Ficheros relevantes](#ficheros-relevantes)
 8. [Detalle de implementación](#detalle-de-implementación)
@@ -943,6 +951,628 @@ Fallback       →  Metered.ca free tier para validar sin infra propia
 
 La configuración ICE se gestiona en Phase 2 del plan — JSON en `oasis-config.json`
 que mezcla defaults (STUN Google) con overrides del operador (TURN propio/servicio).
+
+### State of the art STUN/TURN (marzo 2026)
+
+> **Fuentes**: artículo SO "How to self-host to not rely on WebRTC STUN server"
+> (2013, actualizado 2020), bloggeek.me "Why Doesn't Google Provide a Free TURN
+> Server?" (Tsahi Levent-Levi, 2017), documentación MDN RTCPeerConnection,
+> coturn v4.9.0 (feb 2026), Metered.ca Open Relay / TURN Service (2025-2026).
+
+#### Diferencia crítica: STUN es barato, TURN es caro
+
+| Protocolo | Coste computacional | Coste ancho de banda | Riesgo de abuso |
+|---|---|---|---|
+| **STUN** | Mínimo: 1 query UDP → 1 respuesta | ~0 (solo el binding request) | Bajo: no retransmite media |
+| **TURN** | Medio: mantiene allocation + relay state | **Alto**: todo el tráfico media pasa por el servidor | **Alto**: sin credenciales, cualquiera lo usa como proxy gratuito |
+
+**Datos concretos** (bloggeek.me, verificados 2026):
+- Una sesión WebRTC video a 500 kbps × 15 min ≈ **56 MB** por TURN
+- 10 sesiones/hora × 24h × 30 días = **~360 GB/mes** en una sola máquina pequeña
+- A 2 Mbps (default de Chrome para 640×480): los costes se **cuadruplican**
+- Un stress test de 500 participantes × 6.5 min generó **52 GB** en cada dirección
+
+**Conclusión**: Google ofrece STUN gratis porque es trivial en recursos. **Nadie
+ofrece TURN gratis** de forma fiable — el tráfico media relay es demasiado caro.
+Los servidores TURN "gratuitos" encontrados en repositorios SO/GitHub suelen ser
+credenciales robadas o pruebas de concepto que desaparecen sin aviso.
+
+#### Servidores STUN públicos verificados (2026)
+
+> **Nota**: usar `urls` (plural) en la configuración ICE, no `url` (deprecated).
+> La propiedad `url` fue deprecada en la especificación y eliminada en navegadores
+> modernos (MDN, 2025).
+
+**Servidores Google** (estables desde 2013, sin SLA formal):
+```js
+{ urls: 'stun:stun.l.google.com:19302' },
+{ urls: 'stun:stun1.l.google.com:19302' },
+{ urls: 'stun:stun2.l.google.com:19302' },
+{ urls: 'stun:stun3.l.google.com:19302' },
+{ urls: 'stun:stun4.l.google.com:19302' },
+```
+
+**Otros STUN públicos** (verificar disponibilidad periódicamente):
+```js
+{ urls: 'stun:stun.ekiga.net' },
+{ urls: 'stun:stun.stunprotocol.org:3478' },
+{ urls: 'stun:stun.voipstunt.com' },
+{ urls: 'stun:stun.voiparound.com' },
+```
+
+**Advertencias sobre servidores STUN públicos**:
+- 0 SLA, 0 garantías, 0 soporte — si caen, no hay a quién reclamar
+- Suficientes para desarrollo y proyectos hobby
+- Para producción: **usar coturn propio** o servicio gestionado
+
+#### Servidores TURN: opciones realistas
+
+| Opción | Free tier | Coste producción | Privacidad | Global PoPs | Notas 2026 |
+|---|---|---|---|---|---|
+| **coturn propio** | VPS ~5€/mes | Depende del VPS | **Total** | 1 (tu VPS) | v4.9.0 (feb 2026), 13.8k ★, Docker oficial, Prometheus metrics |
+| **Metered.ca Open Relay** | **20 GB/mes gratis** | $0 (free tier) | Tercero | 31+ regiones | REST API para credenciales, ports 80/443 bypass firewall, TURNS+SSL |
+| **Metered.ca Premium** | 500 MB gratis | $99/mo (150 GB) | Tercero | 31+ regiones | 99.999% uptime, geo-routing, multi-tenancy, REST API, custom domains |
+| **Cloudflare Calls** | Free tier limitado | Variable | Tercero | Edge global | Verificar disponibilidad y límites actuales (2026) |
+| **Xirsys** | Free tier limitado | Variable | Tercero | Multi-región | Alternativa establecida |
+| **Twilio Network Traversal** | Pay-as-you-go | Variable | Tercero | Multi-región | Sin vendor lock-in real para STUN/TURN |
+
+#### coturn: guía de despliegue rápido (2026)
+
+coturn (v4.9.0, última release feb 2026) es el servidor STUN/TURN open source
+dominante. 13.8k estrellas GitHub, 146 contribuidores, mantenimiento activo.
+
+**Instalación**:
+```bash
+# Debian/Ubuntu
+sudo apt install coturn
+# Habilitar servicio
+sudo systemctl enable coturn
+
+# --- O con Docker (recomendado, aísla dependencias) ---
+docker run -d --name coturn \
+  -p 3478:3478 -p 3478:3478/udp \
+  -p 5349:5349 -p 5349:5349/udp \
+  -p 49152-65535:49152-65535/udp \
+  coturn/coturn
+```
+
+**Configuración mínima** (`/etc/turnserver.conf`):
+```ini
+# Escuchar en todas las interfaces
+listening-port=3478
+tls-listening-port=5349
+
+# IP pública del VPS (obligatoria para TURN)
+external-ip=YOUR_PUBLIC_IP
+
+# Dominio (para certificados TLS)
+realm=turn.example.com
+
+# Credenciales (long-term credentials)
+# Opción A: usuario/password estáticos (para testing)
+user=webrtc:password123
+
+# Opción B: TURN REST API (para producción WebRTC)
+# Genera credenciales efímeras con HMAC-SHA1 + shared secret
+use-auth-secret
+static-auth-secret=YOUR_LONG_RANDOM_SECRET
+
+# Límites de seguridad
+total-quota=100
+stale-nonce=600
+no-multicast-peers
+
+# Rango de puertos relay (debe estar abierto en firewall)
+min-port=49152
+max-port=65535
+
+# Log
+log-file=/var/log/turnserver.log
+```
+
+**Generación de credenciales efímeras** (TURN REST API, RFC draft-uberti):
+```js
+// En el servidor Node.js (webrtc_model.js o config):
+const crypto = require('crypto');
+
+function generateTurnCredentials(secret, ttl = 86400) {
+  const timestamp = Math.floor(Date.now() / 1000) + ttl;
+  const username = `${timestamp}:oasis-webrtc`;
+  const hmac = crypto.createHmac('sha1', secret);
+  hmac.update(username);
+  const credential = hmac.digest('base64');
+  return { username, credential };
+}
+
+// Uso al crear PeerConnection:
+const turnCreds = generateTurnCredentials(config.turnSecret);
+const iceServers = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  {
+    urls: [
+      'turn:turn.example.com:3478?transport=udp',
+      'turn:turn.example.com:3478?transport=tcp',
+      'turns:turn.example.com:5349?transport=tcp'
+    ],
+    username: turnCreds.username,
+    credential: turnCreds.credential
+  }
+];
+```
+
+**RFCs soportados por coturn** (relevantes para nuestro uso):
+- **RFC 5389** — STUN base
+- **RFC 5766** — TURN base
+- **RFC 5245** — ICE
+- **RFC 6062** — TCP relay extension
+- **RFC 6156** — IPv6 TURN
+- **RFC 7443** — ALPN para STUN/TURN (permite TURNS en port 443)
+- **RFC 7635** — OAuth third-party authorization
+- **RFC 8016** — Mobility with TURN (reconexión tras cambio de red)
+
+#### Metered.ca Open Relay: opción "plug & play" para Oasis
+
+Para **validar rápidamente** sin montar infra propia, Metered.ca Open Relay ofrece
+20 GB/mes gratis con cobertura global y API REST para credenciales:
+
+```js
+// Obtener iceServers dinámicos vía REST API
+const response = await fetch(
+  'https://yourappname.metered.live/api/v1/turn/credentials?apiKey=API_KEY'
+);
+const iceServers = await response.json();
+// iceServers ya viene formateado para RTCPeerConnection
+
+const pc = new RTCPeerConnection({ iceServers });
+```
+
+**Ventajas para Oasis**:
+- **Ports 80 y 443**: bypass de firewalls corporativos y DPI
+- **TURNS + SSL**: funciona incluso con Deep Packet Inspection
+- **Geo-routing automático**: conecta al servidor más cercano al peer
+- **Sin infraestructura propia**: ideal para la fase de validación
+
+**Limitaciones**:
+- 20 GB/mes — suficiente para desarrollo/testing, insuficiente para producción con video
+- Dependencia de tercero (contradice filosofía SSB de autonomía)
+- Requiere signup y API key
+
+#### Mejores prácticas de configuración ICE (2026)
+
+1. **Usar `urls` (plural), no `url`**: La spec MDN marca `url` como deprecated.
+   Los navegadores modernos lo ignoran. `node-datachannel` también usa `urls`.
+
+2. **Multiple TURN transports**: incluir UDP, TCP y TURNS para máxima
+   compatibilidad con firewalls restrictivos:
+   ```js
+   {
+     urls: [
+       'turn:turn.example.com:3478?transport=udp',    // Más rápido
+       'turn:turn.example.com:3478?transport=tcp',    // Si UDP bloqueado
+       'turns:turn.example.com:443?transport=tcp'     // Si todo bloqueado (parece HTTPS)
+     ],
+     username: '...',
+     credential: '...'
+   }
+   ```
+
+3. **Credenciales efímeras, nunca estáticas en producción**: Las credenciales
+   TURN hardcodeadas (como las del artículo SO de 2013) son un riesgo:
+   - Cualquiera que lea el código fuente puede abusar del servidor
+   - Tsahi Levent-Levi (bloggeek.me): *"If you happen to bump into a TURN server
+     with user/password credentials that work, please don't make use of them —
+     someone ends up footing the bill for you"*
+   - Usar **TURN REST API** (draft-uberti) con `use-auth-secret` en coturn
+
+4. **STUN + TURN siempre, no STUN sola**: ~80% de conexiones P2P funcionan con
+   solo STUN, pero el 20% restante (NAT simétrico empresarial, carriers
+   móviles) requiere TURN. En producción, siempre configurar ambos.
+
+5. **`iceTransportPolicy: 'relay'`** solo para testing: fuerza todo el tráfico
+   por TURN (útil para verificar que TURN funciona). Nunca en producción.
+
+6. **Testing de conectividad**: usar la herramienta Trickle ICE para verificar
+   que los servidores STUN/TURN responden correctamente:
+   - https://webrtc.github.io/samples/src/content/peerconnection/trickle-ice/
+   - https://www.metered.ca/turn-server-testing
+
+#### Aplicación a Oasis: configuración por defecto y overrides
+
+```json
+// oasis-config.json (defaults + overrides del operador)
+{
+  "webrtcIceServers": [
+    { "urls": "stun:stun.l.google.com:19302" },
+    { "urls": "stun:stun1.l.google.com:19302" }
+  ],
+  "webrtcTurnEnabled": false,
+  "webrtcTurnProvider": "none",
+  "webrtcTurnCoturnSecret": "",
+  "webrtcTurnCoturnUrl": "",
+  "webrtcTurnMeteredApiKey": "",
+  "webrtcTurnMeteredAppName": ""
+}
+```
+
+**Lógica en `webrtc_model.js`**:
+```js
+async function buildIceServers(config) {
+  // 1. Siempre incluir STUN
+  const servers = config.webrtcIceServers.map(s =>
+    typeof s === 'string' ? { urls: s } : s
+  );
+
+  // 2. Añadir TURN si está habilitado
+  if (config.webrtcTurnEnabled) {
+    if (config.webrtcTurnProvider === 'coturn') {
+      // Credenciales efímeras vía TURN REST API
+      const creds = generateTurnCredentials(config.webrtcTurnCoturnSecret);
+      servers.push({
+        urls: [
+          `turn:${config.webrtcTurnCoturnUrl}:3478?transport=udp`,
+          `turn:${config.webrtcTurnCoturnUrl}:3478?transport=tcp`,
+          `turns:${config.webrtcTurnCoturnUrl}:5349?transport=tcp`
+        ],
+        username: creds.username,
+        credential: creds.credential
+      });
+    } else if (config.webrtcTurnProvider === 'metered') {
+      // Credenciales dinámicas vía REST API de Metered
+      const resp = await fetch(
+        `https://${config.webrtcTurnMeteredAppName}.metered.live/api/v1/turn/credentials?apiKey=${config.webrtcTurnMeteredApiKey}`
+      );
+      const meteredServers = await resp.json();
+      servers.push(...meteredServers);
+    }
+  }
+
+  return servers;
+}
+```
+
+**Escenarios de uso de Oasis**:
+
+| Escenario | Config TURN | Motivo |
+|---|---|---|
+| **Solo LAN** (ssb-lan) | No necesario | Conectividad directa por IP local, STUN innecesario |
+| **Testing local** (manual) | No necesario | Ambos peers en localhost o LAN |
+| **Peers remotos** (ssb-conn) | **Recomendado** | Los peers SSB pueden estar detrás de NAT simétrico |
+| **Despliegue sobre Internet** | **Obligatorio** | Sin TURN, ~20% de usuarios no pueden conectar |
+
+#### node-datachannel: configuración ICE específica
+
+`node-datachannel` acepta iceServers como array de strings (formato simplificado)
+o como objetos con `urls`/`username`/`credential`. Verificar que se usen los
+formatos correctos para la versión instalada:
+
+```js
+const nodeDatachannel = require('node-datachannel');
+
+// Formato string simplificado (solo STUN):
+const pc = new nodeDatachannel.PeerConnection("PeerA", {
+  iceServers: ["stun:stun.l.google.com:19302"]
+});
+
+// Formato completo con TURN (verificar API de node-datachannel):
+const pc = new nodeDatachannel.PeerConnection("PeerA", {
+  iceServers: [
+    "stun:stun.l.google.com:19302",
+    "turn:username:credential@turn.example.com:3478"
+  ]
+});
+```
+
+> **TODO**: verificar el formato exacto que `node-datachannel` acepta para
+> credenciales TURN. La API de libdatachannel (C++) usa un formato diferente al
+> de la Web API. Posible que requiera `"turn:host:port?transport=udp"` con
+> username/password separados. Consultar:
+> https://github.com/niccoloterreri/node-datachannel o
+> https://github.com/niccoloterreri/libdatachannel
+
+#### Evolución prevista (2026-2027)
+
+| Tendencia | Impacto en Oasis | Estado |
+|---|---|---|
+| **WebTransport** (HTTP/3 + QUIC) | Posible alternativa futura al DataChannel para datos, pero no reemplaza WebRTC para P2P | Draft IETF, experimental en Chrome |
+| **ICE-lite** en servers con IP pública | Si Oasis corriera en VPS, podría usar ICE-lite (solo candidatos host, sin STUN/TURN) | Soportado por node-datachannel |
+| **TURN-bis** (dual allocation) | Mejora eficiencia de TURN con menos allocations | Draft, coturn tiene soporte experimental |
+| **RFC 8016 Mobility** | Reconexión TURN tras cambio de red (WiFi→4G) sin perder sesión | coturn lo soporta, node-datachannel TBD |
+| **Metered.ca / Cloudflare Calls** crecimiento | Alternativas managed cada vez más baratas — 20 GB gratis ya viable para Oasis | Disponible ahora |
+
+### Opción A: oasis-full — coturn co-ubicado en pubs SSB
+
+> **Premisa**: Cada instancia Oasis ya se conecta a un **pub SSB de confianza**
+> que corre en un VPS con IP pública. El pub ya es infraestructura que los
+> operadores mantienen. La idea es que ese mismo VPS ofrezca STUN + TURN como
+> un servicio más, empaquetado en un módulo npm que el pub instala.
+
+#### Arquitectura
+
+```
+  Oasis A (localhost)          Pub A (VPS, IP pública)               Pub B (VPS, IP pública)          Oasis B (localhost)
+  ═══════════════════          ═══════════════════════               ═══════════════════════          ═══════════════════
+        │                           │                                       │                              │
+        │  [ya conectado via SSB]   │                                       │  [ya conectado via SSB]      │
+        │                           │                                       │                              │
+        │── GET /webrtc ──────────>│                                       │                              │
+        │                      [pide credenciales TURN                     │                              │
+        │                       al pub de confianza]                       │                              │
+        │                           │                                       │                              │
+        │                      [coturn genera creds                        │                              │
+        │                       efímeras HMAC-SHA1]                        │                              │
+        │                           │                                       │                              │
+        │<── iceServers ────────────│                                       │                              │
+        │   stun:pub-a.example.com                                          │                              │
+        │   turn:pub-a.example.com                                          │                              │
+        │                           │                                       │                              │
+        │── createOffer() ────────>│                                       │                              │
+        │   (con iceServers del pub)│                                       │                              │
+        │                           │                                       │                              │
+        │   ═══════════════════════ ICE: P2P directo o relay via pub ═══════════════════════              │
+        │                           │         ↕                             │                              │
+        │                           │   [coturn relay si                    │                              │
+        │                           │    P2P imposible]                     │                              │
+```
+
+#### Qué incluye el paquete npm `ssb-turn`
+
+El pub instala `ssb-turn` como un plugin SSB (igual que `ssb-conn`, `ssb-blobs`, etc.):
+
+```bash
+# En el VPS del pub:
+npm install ssb-turn
+```
+
+**Componentes del paquete**:
+
+| Componente | Función | Implementación |
+|---|---|---|
+| **coturn wrapper** | Instala/configura/arranca coturn como child process o Docker container | `scripts/setup-coturn.sh` + auto-genera `turnserver.conf` |
+| **Credenciales efímeras** | API interna para generar creds TURN REST API (HMAC-SHA1) | `lib/credentials.js` — `generateTurnCredentials(secret, ttl)` |
+| **Endpoint SSB** | Plugin `sbot.turn.getCredentials(peerId, cb)` para que los clientes Oasis pidan creds | `index.js` — expone RPC vía muxrpc |
+| **Auto-detección IP** | Detecta IP pública del VPS (vía STUN a sí mismo o metadata API del cloud) | `lib/detect-ip.js` |
+| **Health check** | Verifica que coturn responde antes de servir credenciales | `lib/health.js` — `stunClient.bind()` al propio coturn |
+| **Config defaults** | Defaults sensatos: ports 3478/5349, UDP+TCP+TURNS, min-port 49152 | `lib/defaults.js` |
+
+**Flujo de obtención de credenciales**:
+```js
+// En Oasis (webrtc_model.js), al crear PeerConnection:
+const sbot = await cooler.open();
+
+// El pub de confianza genera credenciales efímeras (TTL 24h)
+const turnInfo = await new Promise((resolve, reject) => {
+  sbot.turn.getCredentials((err, info) => {
+    if (err) reject(err);
+    else resolve(info);
+  });
+});
+
+// turnInfo = {
+//   stun: 'stun:pub-a.example.com:3478',
+//   turn: ['turn:pub-a.example.com:3478?transport=udp',
+//          'turn:pub-a.example.com:3478?transport=tcp',
+//          'turns:pub-a.example.com:5349?transport=tcp'],
+//   username: '1711590000:oasis-webrtc',
+//   credential: 'base64-hmac...',
+//   ttl: 86400
+// }
+
+const pc = new nodeDatachannel.PeerConnection("PeerA", {
+  iceServers: [
+    turnInfo.stun,
+    `turn:${turnInfo.username}:${turnInfo.credential}@pub-a.example.com:3478`
+  ]
+});
+```
+
+#### Ventajas de co-ubicar TURN en el pub
+
+| Ventaja | Detalle |
+|---|---|
+| **Zero infra adicional** | El VPS del pub ya existe y tiene IP pública — coturn es un proceso más |
+| **Modelo de confianza natural** | Oasis ya confía en su pub para SSB — extender esa confianza a TURN es coherente |
+| **Credenciales por SSB** | No se necesita servidor HTTP adicional para entregar creds; el propio muxrpc de SSB las transporta |
+| **Privacidad total** | No hay terceros — todo el relay lo hace infraestructura que el operador controla |
+| **STUN gratis incluido** | coturn hace STUN + TURN; STUN del propio pub en vez de depender de Google |
+| **Co-localidad** | Si ambos peers usan el mismo pub, el relay TURN tiene latencia mínima (tráfico no sale del VPS) |
+
+#### Costes estimados (por VPS pub)
+
+| Recurso | Consumo TURN típico | Notas |
+|---|---|---|
+| **CPU** | <5% por sesión relay | coturn es I/O bound, no CPU bound |
+| **RAM** | ~50 MB base + ~2 MB por sesión | Muy modesto |
+| **Ancho de banda** | ~56 MB por sesión video 15 min (500 kbps) | **El factor limitante** — depende del plan VPS |
+| **Disco** | ~10 MB (coturn binary + config) | Despreciable |
+| **VPS típico 5€/mes** | 1-5 TB tráfico incluido | Soporta cientos de sesiones/mes sin coste extra |
+
+#### Configuración `turnserver.conf` auto-generada por `ssb-turn`
+
+```ini
+# Auto-generado por ssb-turn setup
+listening-port=3478
+tls-listening-port=5349
+external-ip=${DETECTED_PUBLIC_IP}
+realm=${PUB_DOMAIN_OR_IP}
+
+# Auth: TURN REST API con shared secret
+use-auth-secret
+static-auth-secret=${GENERATED_SECRET}
+
+# Seguridad
+no-multicast-peers
+stale-nonce=600
+total-quota=300
+bps-capacity=0
+
+# Puertos relay
+min-port=49152
+max-port=65535
+
+# Logs
+log-file=/var/log/ssb-turn/turnserver.log
+simple-log
+
+# TLS (si el pub tiene certificados Let's Encrypt)
+# cert=/etc/letsencrypt/live/${DOMAIN}/fullchain.pem
+# pkey=/etc/letsencrypt/live/${DOMAIN}/privkey.pem
+```
+
+#### Recomendación para operadores de pubs
+
+```
+Pub pequeño (< 50 usuarios)  →  coturn en el mismo VPS (5€/mes)
+Pub mediano (50-500 users)    →  coturn en VPS separado o con BW dedicado
+Pub grande (> 500 users)      →  Múltiples coturn con DNS SRV load balancing
+```
+
+### Opción B: FOSS/FSF — sin Google, sin servicios comerciales
+
+> **Premisa**: Evitar dependencia de Google (`stun.l.google.com`) y de cualquier
+> servicio comercial/privativo. Solo software libre y servidores operados por
+> organizaciones FOSS, comunidades, o infraestructura propia.
+
+#### ¿Es viable prescindir de Google STUN?
+
+**Sí.** Existen servidores STUN operados por proyectos open source y comunidades:
+
+**Servidores STUN de proyectos FOSS** (verificados vía gist mondain y always-online-stun):
+
+| Servidor STUN | Mantenedor | Licencia/Espíritu | Estado (2026) |
+|---|---|---|---|
+| `stun.services.mozilla.com:3478` | **Mozilla Foundation** | MPL/sin ánimo de lucro | ✅ Activo |
+| `stun.nextcloud.com:443` | **Nextcloud GmbH** | AGPL / open core | ✅ Activo (port 443!) |
+| `stun.linphone.org:3478` | **Belledonne Communications** | GPLv3 (Oralphone/Opalphone) | ✅ Activo |
+| `stun.ekiga.net:3478` | **GNOME Foundation** (proyecto Ekiga) | GPLv2 | ⚠️ Intermitente |
+| `stun.freeswitch.org:3478` | **SignalWire** (FreeSWITCH) | MPL 1.1 | ✅ Activo |
+| `stun.ipfire.org:3478` | **IPFire Project** | GPLv3 (distro firewall libre) | ✅ Activo |
+| `stun.noblogs.org:3478` | **Autistici/Inventati** (colectivo activista) | Comunidad libre | ⚠️ Verificar |
+| `stun.srce.hr:3478` | **SRCE** (centro académico Croacia) | Académico/público | ✅ Activo |
+| `stun.nottingham.ac.uk:3478` | **University of Nottingham** | Académico/público | ⚠️ Verificar |
+| `stun.ucsb.edu:3478` | **UC Santa Barbara** | Académico/público | ⚠️ Verificar |
+| `stunserver2025.stunprotocol.org:3478` | **STUNTMAN project** (John Selbie) | Apache 2.0 | ✅ Activo |
+| `stun.flashdance.cx:3478` | Comunidad individual (iocc-git) | UDP/TCP/v4/v6 | ✅ Activo |
+| `stun.cloudflare.com:3478` | Cloudflare (no FOSS pero sí gratuito) | ⚠️ Corporativo free tier | ✅ Activo |
+
+**Lista auto-actualizada**: El proyecto **always-online-stun** (github.com/pradt2/always-online-stun) mantiene una lista de servidores STUN verificados automáticamente. Se puede usar para seleccionar dinámicamente servidores activos.
+
+#### Stack FOSS completo para Oasis
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                   Stack FOSS/FSF puro                   │
+├──────────────────┬──────────────────────────────────────┤
+│ Componente       │ Solución FOSS                        │
+├──────────────────┼──────────────────────────────────────┤
+│ STUN             │ Mozilla / Nextcloud / STUNTMAN       │
+│                  │ (o coturn propio en modo stun-only)   │
+├──────────────────┼──────────────────────────────────────┤
+│ TURN             │ coturn propio (en pub VPS)            │
+│                  │ Licencia: BSD-style                   │
+│                  │ 13.8k ★, 146 contributors             │
+├──────────────────┼──────────────────────────────────────┤
+│ STUN library     │ STUNTMAN (Apache 2.0, C++)            │
+│ (si propio)      │ o coturn (BSD-ish, C)                │
+├──────────────────┼──────────────────────────────────────┤
+│ STUN en Node.js  │ stun (npm) — implementación JS        │
+│ (si embedded)    │ werift/stun — TypeScript               │
+├──────────────────┼──────────────────────────────────────┤
+│ WebRTC stack     │ node-datachannel (MIT) → libdatachannel│
+│                  │ (MPL 2.0, C++)                        │
+├──────────────────┼──────────────────────────────────────┤
+│ Señalización     │ SSB (AGPL) vía muxrpc                │
+├──────────────────┼──────────────────────────────────────┤
+│ Media            │ ffmpeg (LGPL 2.1+ / GPL 2+)           │
+└──────────────────┴──────────────────────────────────────┘
+```
+
+#### ¿Existen TURN servers FOSS gratuitos públicos?
+
+**No de forma fiable.** Las razones (explicadas por Tsahi Levent-Levi en
+bloggeek.me) son fundamentales:
+
+1. **STUN es stateless y ligero**: una query UDP, una respuesta. Coste ~0.
+   Cualquier organización puede ofrecer esto gratis indefinidamente.
+
+2. **TURN es stateful y retransmite media**: todo el tráfico A↔B pasa por el
+   servidor. Una sesión de video de 15 min a 500 kbps = 56 MB. A escala, los
+   costes de ancho de banda son significativos.
+
+3. **TURN con credenciales públicas = abuso**: si publicas user/pass de TURN,
+   cualquiera lo usa como proxy gratuito. Hay constancia de esto en SO y GitHub.
+
+**Excepciones parciales**:
+- **Metered.ca Open Relay**: 20 GB/mes gratis, pero es privativo (no FOSS).
+- **freestun.net**: proyecto comunitario, pero sin garantías ni SLA.
+- **Contribuciones individuales** (cf. `evan-brass` en el gist de mondain): servidores TURN
+  experimentales que aparecen y desaparecen.
+
+**Conclusión FOSS para TURN**: la única opción realmente libre y fiable es
+**correr tu propio coturn**. No existe un "Google STUN pero para TURN" — el
+modelo económico no lo permite.
+
+#### Configuración FOSS pura para `oasis-config.json`
+
+```json
+{
+  "webrtcIceServers": [
+    { "urls": "stun:stun.services.mozilla.com:3478" },
+    { "urls": "stun:stun.nextcloud.com:443" },
+    { "urls": "stun:stunserver2025.stunprotocol.org:3478" }
+  ],
+  "webrtcTurnEnabled": true,
+  "webrtcTurnProvider": "coturn",
+  "webrtcTurnCoturnSecret": "GENERATED_RANDOM_SECRET",
+  "webrtcTurnCoturnUrl": "turn.mi-pub-ssb.org"
+}
+```
+
+**Sin ninguna referencia a Google, Twilio, Xirsys, Metered ni ningún servicio
+comercial.** El STUN lo proveen Mozilla y Nextcloud (organizaciones afines al
+software libre). El TURN lo provee el propio pub con coturn.
+
+#### Riesgo: servidores STUN FOSS pueden caer
+
+| Riesgo | Mitigación |
+|---|---|
+| Mozilla retira `stun.services.mozilla.com` | Múltiples servidores en lista (Nextcloud, STUNTMAN, IPFire) |
+| Todos los STUN externos caen | coturn propio del pub también hace STUN — fallback local |
+| coturn del pub cae | `ssb-turn` incluye health check — la vista muestra error claro |
+| Servidores cambian de hostname | Integrar `always-online-stun` para descubrimiento dinámico (futuro) |
+
+**Defensa principal**: si el pub corre coturn, ese mismo coturn es STUN + TURN.
+Los servidores STUN externos son **suplementarios**, no obligatorios. En el
+peor caso, el pub es autosuficiente.
+
+### Comparativa final: oasis-full vs. FOSS/FSF
+
+| Aspecto | Opción A: oasis-full | Opción B: FOSS/FSF puro |
+|---|---|---|
+| **STUN** | coturn del pub + Google como fallback | Mozilla + Nextcloud + STUNTMAN + coturn propio |
+| **TURN** | coturn en el pub VPS | coturn en el pub VPS (idéntico) |
+| **Dependencia Google** | Sí (STUN fallback) | **No** |
+| **Dependencia comercial** | Ninguna para TURN | **Ninguna** |
+| **Paquete npm** | `ssb-turn` | `ssb-turn` (mismo paquete, distinta config) |
+| **Complejidad** | Baja (Google STUN siempre funciona) | Media (hay que mantener lista STUN FOSS) |
+| **Filosofía** | Pragmática | Coherente FSF/FOSS al 100% |
+| **Riesgo** | Bajo (Google STUN muy estable) | Medio (STUN FOSS puede fluctuar) |
+| **Recomendación** | Default para la mayoría de operadores | Para operadores con principios estrictos FOSS |
+
+**Propuesta**: el paquete `ssb-turn` soporta ambas opciones mediante un flag
+de configuración:
+
+```json
+// oasis-config.json — Opción A (default):
+{ "webrtcStunPolicy": "pragmatic" }
+// Usa: coturn propio + Google STUN como fallback
+
+// oasis-config.json — Opción B:
+{ "webrtcStunPolicy": "foss-only" }
+// Usa: coturn propio + Mozilla/Nextcloud/STUNTMAN, 0 Google/comercial
+```
+
+El modelo `webrtc_model.js` lee `webrtcStunPolicy` y construye `iceServers`
+con la lista apropiada. Ambas opciones usan el mismo coturn del pub para TURN.
 
 ---
 
