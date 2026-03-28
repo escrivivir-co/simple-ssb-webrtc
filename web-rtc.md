@@ -10,9 +10,9 @@
 
 ### Índice
 
-1. [Transmisión](#1-transmisión) — 1.1 [Señalización SDP](#11-señalización-oferta-y-respuesta) · 1.2 [Tres capas](#12-tres-capas-de-comunicación) · 1.3 [ICE](#13-descubrimiento-de-ruta-ice) · 1.4 [STUN](#14-stun--ip-pública) · 1.5 [TURN](#15-turn--relay-para-nats-simétricos) · 1.6 [Ecosistema](#16-el-ecosistema-de-implementaciones) (1.6.1 [Node.js](#161-librerías-webrtc-para-nodejs-sin-navegador) · 1.6.2 [Otros lenguajes](#162-librerías-webrtc-en-otros-lenguajes-relevantes-para-22) · 1.6.3 [Decisión](#163-análisis-para-la-decisión)) · 1.7 [Caso SSB-Oasis](#17-el-caso-ssb-oasis-solar)
-2. [Consumo de la transmisión](#2-consumo-de-la-transmisión) — 2.1 [Alternativas de retransmisión HTML/CSS al navegador](#21-alternativas-de-retransmisión-htmlcss-al-navegador) · 2.2 [Servidor media dedicado](#22-servidor-media-dedicado-la-alternativa-fuera-de-la-caja) · 2.3 [Seguridad](#23-seguridad-csrf-csp-y-la-tensión-webrtc--tor)
-3. [Implementación](#3-implementación)
+1. [Transmisión](#1-transmisión) — 1.1 [Señalización SDP](#11-señalización-oferta-y-respuesta) · 1.2 [Tres capas](#12-tres-capas-de-comunicación) · 1.3 [ICE](#13-descubrimiento-de-ruta-ice) · 1.4 [STUN](#14-stun--ip-pública) · 1.5 [TURN](#15-turn--relay-para-nats-simétricos) · 1.6 [Ecosistema](#16-el-ecosistema-de-implementaciones) (1.6.1 [Node.js](#161-librerías-webrtc-para-nodejs-sin-navegador) · 1.6.2 [Otros lenguajes](#162-librerías-webrtc-en-otros-lenguajes-relevantes-para-22) · 1.6.3 [Decisión](#163-análisis-para-la-decisión)) · 1.7 [Caso SSB-Oasis](#17-el-caso-ssb-oasis-solar) ([Mumble como infra VoIP](#mumble-como-infraestructura-voip-existente))
+2. [Consumo de la transmisión](#2-consumo-de-la-transmisión) — 2.1 [Alternativas de retransmisión HTML/CSS al navegador](#21-alternativas-de-retransmisión-htmlcss-al-navegador) · 2.2 [Servidor media dedicado](#22-servidor-media-dedicado-la-alternativa-fuera-de-la-caja) (A [go2rtc](#a-go2rtc--la-navaja-suiza) · B [MediaMTX](#b-mediamtx--router-de-protocolos) · C [Janus](#c-janus-webrtc-gateway--el-gateway-webrtc-completo) · **Arq. 3** [Mumble hybrid ★★](#arquitectura-3-mumble-como-canal-de-audio--candidata-para-oasis)) · 2.3 [Seguridad](#23-seguridad-csrf-csp-y-la-tensión-webrtc--tor)
+3. [Implementación](#3-implementación) — A [node-datachannel + ffmpeg](#camino-a-node-datachannel--ffmpeg-plan-original) · B [go2rtc](#camino-b-go2rtc-como-servidor-media-22-arq-1) · **C** [Mumble + go2rtc + datachannel](#camino-c-mumble-audio--go2rtc-vídeo--node-datachannel-datos-22-arq-3)
 4. [Glosario](#4-glosario)
 
 ---
@@ -260,6 +260,54 @@ El dispositivo tiene **GPU VideoCore IV** con encoder H.264 por hardware, accesi
 
 **Dato relevante**: el Solar Net Hub incluye **Tor + Privoxy** para enrutar tráfico por la red onion, y **Mumble** (VoIP Opus) ya instalado. Ambos afectan las decisiones arquitectónicas — ver [§2.3 — Seguridad](#23-seguridad-csrf-csp-y-la-tensión-webrtc--tor).
 
+#### Mumble como infraestructura VoIP existente
+
+Mumble no es un detalle menor: es un sistema VoIP completo con más de 20 años de madurez, ya desplegado y funcionando en el dispositivo. Su protocolo merece análisis propio porque condiciona la arquitectura (ver [§2.2 Arq. 3](#arquitectura-3-mumble-para-audio--go2rtcmediamtx-para-vídeo-hybrid)).
+
+**Ficha técnica del protocolo Mumble**:
+
+| Capa | Protocolo | Puerto | Función |
+|---|---|---|---|
+| **Control** | TCP + TLS 1.2 (AES-256-SHA) | 64738 | Autenticación, canales, ACLs, estado de usuarios, chat texto |
+| **Voz** | UDP + OCB-AES128 | 64738 | Audio Opus/CELT cifrado, baja latencia (~20–50 ms) |
+| **Voz fallback** | TCP tunnel (sobre el canal de control) | 64738 | Mismo audio encapsulado en TCP cuando UDP no funciona (NAT/firewall) |
+| **Serialización** | Protocol Buffers (Mumble.proto) | — | Mensajes de control tipados y extensibles |
+| **Codec preferido** | Opus (desde 1.2.4, junio 2013) | — | Mismo codec que WebRTC; calidad superior a 48 kHz |
+| **Cifrado voz UDP** | OCB-AES128 (modo AEAD) | — | Cifrado autenticado: confidencialidad + integridad en un solo paso |
+| **Autenticación** | Certificado X.509 del cliente + username | — | El servidor identifica clientes por certificado; TLS mutuo opcional |
+
+```
+  Mumble Client                                    Mumble Server (murmurd)
+  ══════════════                                    ═══════════════════════
+       │                                                      │
+       │── TCP connect ──────────────────────────────────────>│
+       │── TLS handshake (AES-256-SHA) ──────────────────────>│
+       │<─ TLS established ──────────────────────────────────│
+       │                                                      │
+       │── Version (protobuf) ───────────────────────────────>│
+       │── Authenticate (user, cert, tokens) ────────────────>│
+       │<─ CryptSetup (key, nonce para OCB-AES128 UDP) ──────│
+       │<─ ChannelState[] (árbol de canales) ────────────────│
+       │<─ UserState[] (usuarios conectados) ────────────────│
+       │<─ ServerSync (session_id, permisos, welcome) ───────│
+       │                                                      │
+       │══ UDP ping (conectividad check) ═══════════════════>│
+       │<═ UDP pong ═════════════════════════════════════════│
+       │                                                      │
+       │══ Voice (Opus, OCB-AES128, UDP) ═══════════════════>│
+       │<═ Voice (otros usuarios, Opus, UDP) ════════════════│
+       │                                                      │
+       │   [si UDP falla: voice tunneled sobre TCP]           │
+```
+
+**¿Por qué importa para Oasis?**
+
+1. **Opus compartido**: tanto Mumble como WebRTC usan Opus como codec de audio preferido. No hay conversión de codec necesaria si se puentean.
+2. **Cifrado mandatorio**: Mumble cifra *todo* — TLS para control, OCB-AES128 para voz. No existe modo sin cifrar. Esto es compatible con la filosofía de seguridad del SNH.
+3. **TCP fallback nativo**: cuando UDP no funciona (NAT simétrico, Tor), Mumble tuneliza la voz por TCP automáticamente. Esto es exactamente el problema que WebRTC resuelve con TURN, pero Mumble lo resuelve gratis.
+4. **Funciona sobre Tor**: Mumble TCP tunnel funciona sobre las hidden services de Tor porque es TCP puro. WebRTC sobre Tor es problemático (ver §2.3). Esto da a Mumble una **ventaja de privacidad fundamental**.
+5. **Ya consume ~10 MB de RAM**: murmurd ya está corriendo. No añade coste de memoria al presupuesto de 1 GB.
+
 Una solución pasa por:
 
 1. Conexión de los periféricos multimodales a la RPi.
@@ -272,7 +320,8 @@ Una solución pasa por:
 |---|---|---|
 | JS en cliente (PR original) | `getUserMedia` + `RTCPeerConnection` en el navegador | Rechazado por mantenedores de Oasis: "no client-side JS" |
 | werift (TS puro) | Todo en TypeScript, sin binarios nativos | Viable, pero menor rendimiento para media tracks |
-| **node-datachannel + ffmpeg** | DataChannels + media vía ffmpeg como captura/decode | **Elegida**: ligero, binarios pequeños, acceso directo a hardware |
+| **node-datachannel + ffmpeg** | DataChannels + media vía ffmpeg como captura/decode | **Elegida** para stack WebRTC puro: ligero, binarios pequeños, acceso directo a hardware |
+| **Mumble (audio) + go2rtc (vídeo)** | Reutilizar murmurd ya instalado para audio; go2rtc para vídeo | **Candidata fuerte**: cero código audio nuevo, Tor-compatible, protocolo maduro. Detalle en [§2.2 Arq. 3](#arquitectura-3-mumble-para-audio--go2rtcmediamtx-para-vídeo-hybrid) |
 
 **Pipeline de transmisión por pista**:
 
@@ -397,14 +446,14 @@ La decisión pendiente: **¿cómo entrega el servidor Node.js audio y vídeo al 
 #### Análisis comparativo para Oasis
 
 ```
-  ┌─────────────────────────────────────────────────────────────────┐
+  ┌──────────────────────────────────────────────────────────────────┐
   │                        LATENCIA                                  │
   │  50ms        200ms       1s         3s          6s               │
   │   │           │          │          │           │                │
   │   █ WAV       █ MJPEG    │          │           │   audio        │
   │   │           █ OGG      │          │           │                │
   │   │           │  MP3─────█          │           │   vídeo        │
-  │   │           │          │  HLS─────█───────────█                 │
+  │   │           │          │  HLS─────█───────────█                │
   │   │           │          █ meta-ref │           │                │
   └──────────────────────────────────────────────────────────────────┘
 ```
@@ -578,50 +627,343 @@ api:
 ##### Arquitectura 2: MediaMTX + rpicam (zero-copy cámara CSI)
 
 ```
-  ┌──────────────────────────────────────────────────────────────────┐
-  │                     Raspberry Pi 3B                                │
-  │                                                                    │
-  │  ┌──────────┐  ribbon   ┌────────────┐  auto    ┌──────────────┐ │
-  │  │ 🎥 Cam CSI │────────>│  rpicam-vid  │──RTSP──>│   MediaMTX    │ │
-  │  └──────────┘          │  (nativo)    │        │   :8554       │ │
-  │                        └────────────┘        │                │ │
-  │  ┌──────────┐  ffmpeg                         │  auto-convierte│ │
-  │  │ 🎤 Mic    │──────────── RTSP ─────────────>│  RTSP → HLS   │ │
-  │  └──────────┘                                │  RTSP → MJPEG │ │
-  │                                               └───────┬──────┘ │
-  │  ┌──────────┐                                         │         │
-  │  │ Node.js   │←── hooks (on_connect/on_disconnect) ────┘         │
-  │  │ (Oasis)   │── sirve HTML con URLs a MediaMTX ───────────────> │
-  │  └──────────┘                                                    │
-  └──────────────────────────────────────────────────────────────────┘
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │                     Raspberry Pi 3B                                    │
+  │                                                                        │
+  │  ┌────────────┐  ribbon   ┌──────────────┐  auto   ┌─────────────────┐ │
+  │  │ 🎥 Cam CSI │──────────>│  rpicam-vid  │──RTSP──>│   MediaMTX      │ │
+  │  └────────────┘           │  (nativo)    │         │   :8554         │ │
+  │                           └──────────────┘         │                 │ │
+  │  ┌───────────┐  ffmpeg                             │  auto-convierte │ │
+  │  │ 🎤 Mic    │──────────── RTSP ─────────────────> │  RTSP → HLS     │ │
+  │  └───────────┘                                     │  RTSP → MJPEG   │ │
+  │                                                    └───────┬─────────┘ │
+  │  ┌───────────┐                                             │           │
+  │  │ Node.js   │←── hooks (on_connect/on_disconnect) ────────┘           │
+  │  │ (Oasis)   │── sirve HTML con URLs a MediaMTX ─────────────────────> │
+  │  └───────────┘                                                         │
+  └────────────────────────────────────────────────────────────────────────┘
 ```
 
 **Ventaja diferencial**: MediaMTX usa `rpicam-vid` para acceder a la cámara CSI **sin pasar por v4l2** (zero-copy del GPU al encoder H.264). En una RPi 3B con GPU VideoCore IV, esto libera CPU significativamente. El audio sigue necesitando ffmpeg→RTSP como fuente.
 
-##### Arquitectura 3: Mumble para audio + go2rtc/MediaMTX para vídeo (hybrid)
+##### Arquitectura 3: Mumble como canal de audio (★★ candidata para Oasis)
 
-**Descubrimiento clave**: **Mumble ya está instalado** en el Solar Net Hub. Mumble es un sistema VoIP completo con codec Opus, cancelación de eco, control automático de ganancia, y un protocolo cliente-servidor maduro. ¿Por qué reinventar la rueda del audio?
+**Descubrimiento clave**: **Mumble ya está instalado** en el Solar Net Hub. Mumble no es solo un programa de chat de voz — es un sistema VoIP completo con codec Opus, cancelación de eco, control automático de ganancia, cifrado mandatorio, sistema de canales/ACLs, y un protocolo cliente-servidor madurado durante >20 años. Reinventar el audio con WebRTC cuando ya existe un stack de audio probado y desplegado merece un análisis profundo.
+
+> El protocolo Mumble se detalla en [§1.7 — Mumble como infraestructura VoIP existente](#mumble-como-infraestructura-voip-existente).
+
+#### ¿Por qué Mumble para audio en vez de WebRTC?
+
+| Criterio | Mumble (murmurd) | WebRTC (node-datachannel + ffmpeg) |
+|---|---|---|
+| **Ya instalado** | ✅ murmurd corre en el SNH | ❌ Hay que instalar y configurar |
+| **Latencia audio** | ~20–50 ms (UDP nativo, Opus optimizado) | ~50–200 ms (ffmpeg encode → RTP → decode → HTTP) |
+| **Cifrado** | TLS + OCB-AES128 mandatorio, sin modo inseguro | DTLS-SRTP (también mandatorio en WebRTC) |
+| **Funciona sobre Tor** | ✅ TCP tunnel nativo; funciona como hidden service | ⚠️ Requiere TURN/TCP; latencia >500 ms; puede fallar |
+| **Cancelación de eco** | ✅ Integrada en el cliente | ❌ Hay que implementar o depender del navegador/OS |
+| **AGC (ganancia automática)** | ✅ Integrada en el cliente | ❌ Hay que implementar o depender del navegador/OS |
+| **Jitter buffer** | ✅ Adaptativo, probado en producción | Depende de la implementación |
+| **CPU en RPi 3B** | ~2–5% (Opus encode/decode optimizado) | ~10–15% (ffmpeg + node-datachannel + HTTP serving) |
+| **RAM adicional** | 0 MB (ya corre) | ~30–50 MB (ffmpeg + node-datachannel con media tracks) |
+| **Código nuevo necesario** | Bridge murmurd → HTTP (~100 líneas) | `media_capture.js` (~400 líneas) + pipelines ffmpeg |
+| **Multi-usuario** | ✅ Nativo (canales, ACLs, whisper groups) | Hay que implementar (es P2P, no multi-party nativo) |
+| **Soporte protocolo** | 20+ años, implementaciones en C++, Go, Rust, Python, JS | Protocolo W3C/IETF estándar, pero joven para Node.js backend |
+
+#### El problema del consumo en el navegador
+
+El único obstáculo real de Mumble para Oasis es el **consumo en el navegador sin JavaScript**. Mumble tiene su propio protocolo (TCP+Protobuf control, UDP+OCB-AES128 voz) que no es HTTP. Para que un `<audio>` HTML renderice audio de Mumble, hay que **puentear** el protocolo Mumble a HTTP streaming.
+
+Hay tres estrategias de bridge, de menor a mayor complejidad:
+
+##### Estrategia 3A: Bridge murmurd → ffmpeg → `<audio>` HTTP (★ recomendada)
+
+El servidor Node.js se conecta a murmurd como un cliente Mumble interno y extrae el audio decodificado (PCM) para re-servirlo por HTTP.
 
 ```
-  ┌─────────────────────────────────────────────────────────────────┐
-  │                   Raspberry Pi 3B                               │
-  │                                                                 │
-  │  🎤 Mic ──> Mumble Server (murmurd)  ──┐                        │
-  │              (ya instalado, Opus)      │                        │
-  │                                        │ Mumble protocol        │
-  │  🎥 Cam ──> go2rtc (v4l2 → MJPEG/HLS)  │  (UDP, cifrado)        │
-  │                                        │                        │
-  └────────────────────────────────────────┼────────────────────────┘
-                                           │
-                              ┌────────────┴───────────────────────────┐
-                              │        Navegador                       │
-                              │                                        │
-                              │  Vídeo: <img>/<video> desde go2rtc     │
-                              │  Audio: Mumble client (web o nativo)   │
-                              └────────────────────────────────────────┘
+  ┌────────────────────────────────────────────────────────────────────┐
+  │                    Raspberry Pi 3B (Debian/Docker)                 │
+  │                                                                    │
+  │  🎤 Mic ──> Mumble Server (murmurd :64738)                         │
+  │               │   ▲                                                │
+  │               │   │ Mumble protocol (localhost, sin red)           │
+  │               ▼   │                                                │
+  │  ┌──────────────────────────────────────────────┐                  │
+  │  │     Bot Mumble interno (Node.js)             │                  │
+  │  │                                              │                  │
+  │  │  gumble/node-mumble → PCM stream             │                  │
+  │  │        │                                     │                  │
+  │  │        ├──> ffmpeg -f s16le → OGG/Opus ──────┼──> GET /audio    │
+  │  │        │    (Transfer-Encoding: chunked)     │    <audio>       │
+  │  │        │                                     │                  │
+  │  │        └──> ffmpeg -f s16le → WAV ───────────┼──> GET /audio    │
+  │  │             (fallback universal)             │    <audio>       │
+  │  └──────────────────────────────────────────────┘                  │
+  │                                                                    │
+  │  🎥 Cam ──> go2rtc (v4l2 → MJPEG/HLS) ─────────────> GET /video    │
+  │                                                       <img>/<video>│
+  │                                                                    │
+  │  Node.js (Oasis) ──> sirve HTML con URLs a bridge + go2rtc         │
+  │                                                                    │
+  └────────────────────────────────────────────────────────────────────┘
+                              │
+                ┌─────────────┴──────────────────────────────────┐
+                │        Navegador (cero JavaScript)             │
+                │                                                │
+                │  <audio src="/webrtc/audio" autoplay controls> │
+                │  <img src="/webrtc/video">                     │
+                │                                                │
+                │  (audio desde bridge murmurd→HTTP)             │
+                │  (vídeo desde go2rtc MJPEG)                    │
+                └────────────────────────────────────────────────┘
 ```
 
-**Matiz honesto**: Mumble requiere un cliente — no se puede consumir en `<audio>` puro sin JS. Existe [mumble-web](https://github.com/nicktomlin/nicktomlin) (cliente web), pero usa JS. Sin embargo, si el equipo ya usa Mumble para voz, **no duplicar el canal de audio en WebRTC** es eficiente: Mumble maneja el audio, WebRTC/go2rtc maneja solo vídeo y datos.
+**Flujo detallado**:
+
+1. **murmurd** ya corre en `:64738`, capturando audio del micrófono local vía ALSA/PulseAudio.
+2. Un **bot Mumble** (proceso Node.js o binario Go) se conecta a murmurd como cliente local (`localhost:64738`). Se une al canal de la llamada.
+3. El bot recibe audio Opus decodificado a PCM de todos los usuarios del canal.
+4. El PCM se pasa a **ffmpeg** (o se sirve directamente) para re-codificar a OGG/Opus (`Content-Type: audio/ogg`) o WAV/PCM (`Content-Type: audio/wav`) como stream HTTP chunked.
+5. Oasis sirve `<audio src="/webrtc/audio" autoplay controls>` que apunta al endpoint HTTP.
+
+**Para audio bidireccional** (que el peer remoto también hable por Mumble):
+- El peer remoto usa un **cliente Mumble nativo** (disponible en todas las plataformas) para unirse al mismo canal.
+- O, si el peer está en un navegador, su audio se captura con `getUserMedia()` → WebRTC → node-datachannel → decodifica a PCM → inyecta en murmurd vía el bot. **Esto requiere JS en el browser del peer remoto**, pero *no* en el browser del SNH que solo consume.
+- Alternativa sin JS en el peer remoto: ambos usan cliente Mumble nativo para audio, y el navegador solo muestra vídeo.
+
+**Librerías para el bot Mumble**:
+
+| Librería | Lenguaje | Estado | Audio streams | Notas |
+|---|---|---|---|---|
+| **[gumble](https://github.com/layeh/gumble)** | Go | Mantenido (2020, estable) | ✅ PCM in/out, ffmpeg source | Bot Go que conecta a murmurd. Módulos: `gumbleffmpeg` (fuente audio desde ffmpeg), `gumbleopenal` (captura/playback local). Binario estático ~5 MB. |
+| **[node-mumble](https://github.com/Rantanen/node-mumble)** | Node.js | ⚠️ No mantenido (2019) | ✅ PCM streams vía eventos `voice` | API sencilla: `connection.on('voice', pcmBuffer)`. Depende de bindings nativos que rompen con Node.js nuevos. 22 dl/sem. |
+| **[pymumble](https://github.com/azlux/pymumble)** | Python | Activo (2024) | ✅ PCM in/out | Maduro, pero Python no está en el stack SNH. |
+| **[mumble-rs](https://github.com/nicktomlin/mumble-rs)** | Rust | Experimental | ✅ | Binding sobre tokio. Inmaduro para producción. |
+
+**Recomendación**: **gumble** (Go) es la opción más robusta. Se compila como binario estático ARM64 (~5 MB), no necesita runtime. Conecta a murmurd, captura el audio mezclado del canal, y lo escribe a `stdout` como PCM raw. Un pipe a ffmpeg convierte a OGG/Opus o WAV.
+
+**Pipeline concreto del bridge**:
+
+```bash
+# Bot gumble captura audio del canal → stdout PCM 16-bit 48kHz mono
+# ffmpeg re-codifica a OGG/Opus para streaming HTTP
+
+mumble-audio-bridge --server localhost:64738 --channel "WebRTC" \
+  | ffmpeg -f s16le -ar 48000 -ac 1 -i pipe:0 \
+           -c:a libopus -application voip -b:a 32k \
+           -f ogg pipe:1 \
+  | serve-as-http --port 3001 --content-type "audio/ogg"
+```
+
+Donde `serve-as-http` es un endpoint HTTP mínimo que sirve el stream con `Transfer-Encoding: chunked`. En Node.js/Koa esto son ~30 líneas.
+
+Para **inyectar audio** (que el bot hable en el canal Mumble):
+
+```bash
+# Audio del peer remoto (decodificado a PCM) → inyectar en murmurd
+ffmpeg -f s16le -ar 48000 -ac 1 -i pipe:0 \
+  | mumble-audio-bridge --server localhost:64738 --channel "WebRTC" --mode inject
+```
+
+##### Estrategia 3B: mumble-web con proxy (JS en cliente)
+
+[mumble-web](https://github.com/Johni0702/mumble-web) es un cliente Mumble HTML5 que usa WebSocket (control) + WebRTC (voz). Requiere [mumble-web-proxy](https://github.com/Johni0702/mumble-web-proxy) (Rust, ~3 MB) para convertir WebSocket↔TCP y WebRTC↔UDP hacia murmurd.
+
+```
+  Navegador                  mumble-web-proxy           murmurd
+  ═════════                  ════════════════           ═══════
+  (mumble-web JS)            (Rust, ~3 MB)             (:64738)
+       │                           │                       │
+       │── WebSocket ─────────────>│── TCP (Mumble) ──────>│
+       │── WebRTC (Opus) ─────────>│── UDP (OCB-AES128) ──>│
+       │<─ WebRTC (Opus) ──────────│<─ UDP (OCB-AES128) ───│
+```
+
+**Veredicto**: funciona bien, pero **viola la restricción "cero JS en cliente"** de Oasis. mumble-web es una app JavaScript completa (React-like, 62.7% JS). Solo útil si el equipo relaja esta restricción para la funcionalidad de voz.
+
+**Sin embargo**, hay un matiz pragmático: si el peer *remoto* (que no es el SNH) accede desde su propio navegador estándar, mumble-web en *su* browser no viola la restricción de Oasis. La restricción es sobre el browser **del SNH servido por Oasis**, no sobre todos los browsers del mundo.
+
+##### Estrategia 3C: Clientes Mumble nativos (sin browser para audio)
+
+La opción más simple: **no puentear nada**. Cada participante usa un cliente Mumble nativo (disponible en Windows, macOS, Linux, iOS, Android) para el audio. El navegador de Oasis solo muestra el vídeo (vía go2rtc `<img>`/`<video>`) y los DataChannels (chat, archivos). El audio es un canal completamente separado.
+
+```
+  ┌──────────────────────────────────────────────────────────────┐
+  │                    Usuario                                   │
+  │                                                              │
+  │  ┌────────────────────────┐   ┌────────────────────────────┐ │
+  │  │  Navegador             │   │  Cliente Mumble nativo     │ │
+  │  │  (Oasis HTML/CSS)      │   │  (Mumble app)              │ │
+  │  │                        │   │                            │ │
+  │  │  Vídeo: <img> go2rtc   │   │  Audio: Opus bidireccional │ │
+  │  │  Chat:  formularios    │   │  Canal: "WebRTC-Room-X"    │ │
+  │  │  Files: DataChannel    │   │                            │ │
+  │  └───────────┬────────────┘   └──────────────┬─────────────┘ │
+  │              │ HTTP                          │ Mumble        │
+  └──────────────┼───────────────────────────────┼───────────────┘
+                 │                               │
+  ┌──────────────┴───────────────────────────────┴───────────────┐
+  │                    Solar Net Hub (RPi 3B)                    │
+  │                                                              │
+  │  Node.js (Oasis :3000) ←──── go2rtc (:1984)                  │
+  │       + node-datachannel      v4l2/ALSA→MJPEG/HLS            │
+  │                                                              │
+  │  murmurd (:64738) ←──── mic ALSA                             │
+  │   (audio bidireccional,                                      │
+  │    canales, ACLs, cifrado)                                   │
+  └──────────────────────────────────────────────────────────────┘
+```
+
+**Ventajas**:
+- **Cero código de audio nuevo**: ni bridge, ni ffmpeg para audio, ni node-datachannel media tracks.
+- **Experiencia de audio superior**: los clientes Mumble nativos tienen AGC, cancelación de eco, jitter buffer, codec Opus optimizado — todo probado en producción durante décadas.
+- **Privacidad máxima**: Mumble funciona sobre Tor vía hidden service. El audio nunca toca WebRTC ni expone IPs.
+- **UX familiar**: Mumble es software libre con apps nativas de calidad en todas las plataformas.
+
+**Desventajas**:
+- **Dos aplicaciones**: el usuario necesita abrir el navegador *y* el cliente Mumble. No es una experiencia unificada.
+- **Coordinación manual**: ¿cómo sabe el usuario que debe conectarse al canal "WebRTC-Room-X" cuando se inicia una llamada? Se necesita algún mecanismo para instruir al usuario (texto en la UI de Oasis, enlace `mumble://`, o invocación automática desde Oasis).
+
+**Mitigación de la UX**: Oasis puede generar un enlace `mumble://` en la vista HTML de la llamada:
+
+```html
+<!-- El protocolo mumble:// abre el cliente Mumble nativo -->
+<a href="mumble://solar-hub.local:64738/WebRTC-Room-42?title=Llamada%20con%20Alice&version=1.3.0">
+  🔊 Unirse al canal de voz
+</a>
+```
+
+Los clientes Mumble nativos registran el handler `mumble://`, de modo que hacer clic abre Mumble y conecta al canal automáticamente. **Sin JavaScript**, solo un `<a href>`.
+
+#### Comparativa de las tres estrategias Mumble
+
+| | 3A: Bridge HTTP | 3B: mumble-web | 3C: Cliente nativo |
+|---|---|---|---|
+| **JS en browser SNH** | ❌ No | ✅ Sí (viola restricción) | ❌ No |
+| **Apps necesarias** | Solo navegador | Solo navegador | Navegador + Mumble |
+| **Código nuevo** | ~100 líneas bridge + config | Instalar mumble-web + proxy | ~10 líneas (URL `mumble://`) |
+| **Latencia audio** | ~200 ms (bridge + HTTP) | ~50 ms (WebRTC directo) | ~20–50 ms (UDP nativo) |
+| **Calidad experiencia** | Buena (audio en `<audio>`) | Excelente (integrado) | Excelente (cliente nativo) |
+| **Bidireccional** | ⚠️ Complejo (inyectar PCM) | ✅ Nativo | ✅ Nativo |
+| **Funciona sobre Tor** | ✅ (murmurd local) | ⚠️ (WebRTC parte necesita TURN) | ✅ (TCP tunnel) |
+| **Dependencias extra** | gumble + ffmpeg | mumble-web-proxy (Rust) | Ninguna en servidor |
+| **RAM adicional** | ~15 MB (gumble + ffmpeg) | ~10 MB (proxy Rust) | 0 MB |
+
+**Recomendación**: **3A** (bridge HTTP) para la UI unificada del SNH, **3C** (cliente nativo) como experiencia premium para el peer remoto. Ambas son compatibles: el SNH consume audio vía `<audio>` (3A), y el peer remoto usa su cliente Mumble nativo (3C) o su navegador con mumble-web (3B).
+
+#### Coordinación de estado: Mumble + node-datachannel
+
+En Arq. 3, el audio viaja por Mumble y los datos/vídeo por otra vía (node-datachannel + go2rtc). Esto requiere un **orquestador de sesión** que coordine ambos mundos:
+
+```
+  ┌─────────────────────────────────────────────────────────────┐
+  │                    Oasis (Node.js)                          │
+  │                                                             │
+  │  ┌───────────────────────────────────────────────────────┐  │
+  │  │             Session Manager (webrtc_model.js)         │  │
+  │  │                                                       │  │
+  │  │  Estado unificado de la llamada:                      │  │
+  │  │    - session_id: "room-42"                            │  │
+  │  │    - peer: "@alice.ed25519"                           │  │
+  │  │    - video: { status: "connected", via: "go2rtc" }    │  │
+  │  │    - audio: { status: "connected", via: "mumble",     │  │
+  │  │              channel: "WebRTC-Room-42" }              │  │
+  │  │    - data:  { status: "connected", via: "datachannel"}│  │
+  │  │                                                       │  │
+  │  │  Al iniciar llamada:                                  │  │
+  │  │    1. Crear canal Mumble "WebRTC-Room-42"             │  │
+  │  │    2. Conectar bot bridge al canal                    │  │
+  │  │    3. Iniciar go2rtc stream                           │  │
+  │  │    4. Enviar offer SDP para DataChannel               │  │
+  │  │    5. Renderizar vista con URLs de audio/vídeo/data   │  │
+  │  │                                                       │  │
+  │  │  Al colgar:                                           │  │
+  │  │    1. Desconectar bot del canal                       │  │
+  │  │    2. Eliminar canal Mumble temporal                  │  │
+  │  │    3. Cerrar DataChannel                              │  │
+  │  │    4. Parar stream go2rtc                             │  │
+  │  └───────────────────────────────────────────────────────┘  │
+  │           │               │              │                  │
+  │     ┌─────┴─────┐   ┌─────┴────┐   ┌─────┴─────┐            │
+  │     │ murmurd   │   │ go2rtc   │   │ node-dc   │            │
+  │     │ (audio)   │   │ (vídeo)  │   │ (datos)   │            │
+  │     └───────────┘   └──────────┘   └───────────┘            │
+  └─────────────────────────────────────────────────────────────┘
+```
+
+**Gestión del canal Mumble**: murmurd soporta la creación dinámica de canales temporales vía el mensaje `ChannelState` del protocolo. El bot gumble puede:
+- Crear un canal temporal `"WebRTC-Room-{session_id}"` al inicio de la llamada.
+- Mover al usuario local al canal.
+- Comunicar al peer remoto (vía DataChannel o SSB) qué canal Mumble unirse.
+- Eliminar el canal temporal al colgar (los canales temporales de Mumble se eliminan automáticamente cuando quedan vacíos).
+
+**Comunicación entre Node.js y el bot gumble**:
+
+| Mecanismo | Complejidad | Fiabilidad |
+|---|---|---|
+| **stdin/stdout** (child_process) | Mínima | ✅ Síncrono, simple |
+| **HTTP API local** (bot expone REST) | Baja | ✅ Desacoplado |
+| **Unix socket** | Baja | ✅ Sin overhead de red |
+| **SSB messages** | Alta | Overengineering |
+
+**Recomendación**: `child_process` con comunicación JSON por stdin/stdout. Oasis lanza el bot bridge como proceso hijo y le envía comandos (`{"action": "join", "channel": "WebRTC-Room-42"}`). El bot responde con estado (`{"status": "joined", "users": ["Alice", "Bridge-Bot"]}`).
+
+#### Impacto en la medición de recursos del RPi 3B
+
+| Componente | RAM | CPU (idle) | CPU (streaming) | Notas |
+|---|---|---|---|---|
+| **murmurd** (ya corre) | ~10 MB | ~0% | ~2–5% | Codec Opus optimizado en C++ |
+| **gumble bridge** | ~5 MB | ~0% | ~1% | Binario Go estático, solo forwarding |
+| **ffmpeg** (re-encode audio) | ~15 MB | ~0% | ~3% | PCM→OGG/Opus, un solo stream |
+| **go2rtc** (vídeo) | ~20 MB | ~0% | ~5–10% | v4l2→MJPEG, sin transcodificación |
+| **node-datachannel** (datos) | ~15 MB | ~0% | ~1% | Solo DataChannel, sin media tracks |
+| **TOTAL Arq. 3** | **~65 MB** | | ~12–20% | |
+| **vs. Arq. 1 (go2rtc integral)** | ~70 MB | | ~10–15% | go2rtc hace audio+vídeo+serving |
+| **vs. Camino A (todo WebRTC)** | ~80 MB | | ~20–30% | ffmpeg full + node-datachannel media |
+
+**Veredicto de recursos**: Arq. 3 es competitiva en RAM (~65 MB vs ~70–80 MB) y **más eficiente en CPU para audio** porque Mumble usa Opus optimizado en C++ nativo frente a ffmpeg encodando en userspace. La diferencia es más pronunciada cuando el peer remoto se conecta vía Tor: Mumble TCP tunnel es ~50% más eficiente que TURN relay de WebRTC.
+
+#### Arquitectura 3 — diagrama completo
+
+```
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │                    Raspberry Pi 3B (Solar Net Hub)                      │
+  │                                                                         │
+  │  ┌─────────────┐                                                        │
+  │  │ 🎤 Mic USB  │──── ALSA ────> murmurd (:64738)                        │
+  │  └─────────────┘                   │  ▲                                 │
+  │                                    │  │ Mumble protocol (localhost)     │
+  │  ┌─────────────┐                   ▼  │                                 │
+  │  │ 🎥 Cam CSI  │── v4l2 ──> go2rtc (:1984)                              │
+  │  └────────────┘              │                                          │
+  │                              │ MJPEG/HLS                                │
+  │                              │                                          │
+  │  ┌──────────────────────────────────────────────────────────────┐       │
+  │  │                Node.js (Oasis :3000)                         │       │
+  │  │                                                              │       │
+  │  │  Session Manager ─┬── gumble bridge (child_process)          │       │
+  │  │                   │     └─ PCM → ffmpeg → OGG HTTP (:3001)   │       │
+  │  │                   │                                          │       │
+  │  │                   ├── node-datachannel                       │       │
+  │  │                   │     └─ DataChannel (chat, files, signal) │       │
+  │  │                   │                                          │       │
+  │  │                   └── webrtc_view.js                         │       │
+  │  │                         └─ HTML: <audio> + <img> + forms     │       │
+  │  └──────────────────────────────────────────────────────────────┘       │
+  │                              │                                          │
+  └──────────────────────────────┼──────────────────────────────────────────┘
+                                 │ HTTP
+                    ┌────────────┴─────────────────────────────────────┐
+                    │        Navegador (cero JavaScript)               │
+                    │                                                  │
+                    │  <audio src="/webrtc/audio" autoplay>            │
+                    │  <img src="/webrtc/video">                       │
+                    │  <form action="/webrtc/send" method="POST">      │
+                    │    <input name="message">                        │
+                    │  </form>                                         │
+                    │  <a href="mumble://...">🔊 Unirse por Mumble</a> │
+                    └──────────────────────────────────────────────────┘
+```
 
 ##### Arquitectura 4: ffmpeg → HLS estático (la más simple posible)
 
@@ -645,25 +987,38 @@ Oasis sirve `/var/www/stream/` como directorio estático. El navegador consume:
 
 #### Comparativa de arquitecturas
 
-| | Arq. 1: go2rtc | Arq. 2: MediaMTX | Arq. 3: Mumble hybrid | Arq. 4: ffmpeg→HLS |
+| | Arq. 1: go2rtc | Arq. 2: MediaMTX | Arq. 3: Mumble hybrid (★★) | Arq. 4: ffmpeg→HLS |
 |---|---|---|---|---|
 | **Complejidad** | Baja | Media | Media | Mínima |
-| **RAM adicional** | ~20–40 MB | ~15–30 MB + rpicam | ~10 MB (murmurd ya corre) | ~30 MB (ffmpeg) |
-| **Latencia vídeo** | 100–300 ms (MJPEG) | 100–300 ms (MJPEG) / 2–6 s (HLS) | 100–300 ms (MJPEG) | 4–12 s (HLS) |
-| **Latencia audio** | 200 ms (MJPEG) / 2 s (HLS) | 2–6 s (HLS) | ~50 ms (Mumble nativo) | 4–12 s (HLS) |
-| **Necesita ffmpeg** | No (captura v4l2/ALSA directa) | Solo para audio (vídeo CSI nativo) | Solo para vídeo si no usa go2rtc | Sí |
-| **Necesita node-datachannel** | Solo si se quiere WebRTC P2P remoto | Solo si WebRTC P2P remoto | Solo para datos/señalización | No |
-| **Cero JS en browser** | ✅ | ✅ | ❌ (Mumble client necesita JS) | ✅ |
-| **Bidireccional** | ✅ (WHEP + two-way audio) | ✅ (WebRTC) | ✅ (Mumble nativo) | ❌ |
+| **RAM adicional** | ~20–40 MB | ~15–30 MB + rpicam | ~65 MB total (~20 MB nuevos, murmurd ya corre) | ~30 MB (ffmpeg) |
+| **Latencia vídeo** | 100–300 ms (MJPEG) | 100–300 ms (MJPEG) / 2–6 s (HLS) | 100–300 ms (MJPEG via go2rtc) | 4–12 s (HLS) |
+| **Latencia audio** | 200 ms (OGG) / 2 s (HLS) | 2–6 s (HLS) | ~200 ms (bridge HTTP) / ~20 ms (cliente nativo) | 4–12 s (HLS) |
+| **Necesita ffmpeg** | No (captura v4l2/ALSA directa) | Solo para audio (vídeo CSI nativo) | Solo para re-encode audio bridge (no captura) | Sí |
+| **Necesita node-datachannel** | Solo si se quiere WebRTC P2P remoto | Solo si WebRTC P2P remoto | Solo para datos/señalización (no media) | No |
+| **Cero JS en browser** | ✅ | ✅ | ✅ (bridge 3A) / ❌ (mumble-web 3B) | ✅ |
+| **Bidireccional** | ✅ (WHEP + two-way audio) | ✅ (WebRTC) | ✅ (Mumble nativo + bridge/cliente) | ❌ |
+| **Funciona sobre Tor** | ⚠️ (WebRTC necesita TURN) | ⚠️ (WebRTC necesita TURN) | ✅ (TCP tunnel nativo) | ✅ (HTTP puro) |
 | **Escritura a microSD** | No (streaming en memoria) | No (streaming en memoria) | No | ⚠️ Constante (.ts segments) |
+| **Código audio nuevo** | ~50 líneas (config go2rtc) | ~50 líneas (config MediaMTX) | ~100 líneas (bridge bot) | ~20 líneas (ffmpeg cmd) |
+| **Reutiliza infra existente** | ❌ (servicio nuevo) | ❌ (servicio nuevo) | ✅ (murmurd ya desplegado) | ❌ |
 
 #### Recomendación
 
-**Para Fase 1–2 (LAN)**: **Arquitectura 1 (go2rtc)** es la opción más potente con la menor complejidad. Un solo binario de 15 MB reemplaza ffmpeg + node-datachannel + mjpeg-server + toda la lógica de transcodificación. Captura directamente de v4l2/ALSA, sirve MJPEG (latencia baja) y HLS (eficiencia). Node.js se limita a servir el HTML y gestionar señalización.
+**Para Fase 1–2 (LAN)**: dos opciones igualmente válidas:
 
-**Para Fase 3 (Internet)**: go2rtc habla WebRTC nativamente (WHEP/WISH), por lo que puede ser el endpoint WebRTC sin que Node.js toque media. La señalización WebRTC se gestiona entre go2rtc y el peer remoto, con Node.js como orquestador vía la API HTTP de go2rtc.
+- **Arquitectura 1 (go2rtc)** si se quiere audio y vídeo en un solo servicio nuevo, sin complejidad de orquestación. Un binario de 15 MB que lo hace todo.
+- **Arquitectura 3 (Mumble hybrid)** si se prefiere reutilizar la infraestructura de audio existente. go2rtc solo para vídeo, murmurd para audio. Más piezas, pero cada pieza es probada y ligera.
 
-**El audio de Mumble** no se descarta como canal complementario: si el equipo ya lo usa, mantener Mumble para conferencias de voz y usar go2rtc solo para vídeo+datos es eficiente y no duplica infraestructura.
+**Para Fase 3 (Internet)**: **Arquitectura 3 tiene una ventaja decisiva** sobre Arq. 1. Cuando la comunicación cruza Internet vía Tor:
+- **go2rtc/WebRTC** necesita TURN para traversar NAT, y **TURN no funciona bien sobre Tor** (UDP bloqueado, TCP con latencia >500 ms).
+- **Mumble** tuneliza audio por **TCP nativo**, que funciona directamente sobre Tor como hidden service. Sin TURN, sin STUN, sin ICE. Simplicidad radical.
+
+Esto convierte a Mumble de "opción complementaria" a **componente estratégico** para el escenario Internet+Tor del Solar Net Hub.
+
+**La recomendación actualizada**:
+- **Audio**: Mumble (murmurd ya instalado) con bridge HTTP para consumo en `<audio>` + enlace `mumble://` para experiencia nativa.
+- **Vídeo**: go2rtc para Fase 1–2 (MJPEG/HLS sin JS); evaluar MediaMTX si se necesita CSI zero-copy.
+- **Datos**: node-datachannel (DataChannel) para chat, archivos, señalización. Invariable en todas las arquitecturas.
 
 > **Nota DRY**: la integración concreta de go2rtc o MediaMTX en el pipeline de Oasis — Dockerfile, supervisord/systemd, configuración de red — se documentará en [PLAN_OASIS.md](./PLAN_OASIS.md) cuando se decida la arquitectura final.
 
@@ -710,7 +1065,7 @@ El Solar Net Hub enruta tráfico por **Tor + Privoxy**. WebRTC, por diseño, nec
   // Forzar relay-only (todo el tráfico por TURN propio):
   { iceTransportPolicy: 'relay' }
   ```
-- **Fase 3 — opción máxima privacidad**: no usar WebRTC para media; usar solo DataChannels (datos) por TURN/TCP, que puede funcionar sobre Tor. Media por canal alternativo (Mumble sobre Tor ya funciona en el SNH).
+- **Fase 3 — opción máxima privacidad**: no usar WebRTC para media; usar solo DataChannels (datos) por TURN/TCP, que puede funcionar sobre Tor. Media por canal alternativo (**Mumble sobre Tor ya funciona en el SNH** — ver [§2.2 Arq. 3](#arquitectura-3-mumble-como-canal-de-audio--candidata-para-oasis)). Esta opción convierte a Mumble de complemento a **componente estratégico**: el audio viaja por TCP tunnel nativo de Mumble sobre Tor hidden service, el vídeo por go2rtc/HLS sobre HTTP, y los datos por DataChannel sobre TURN/TCP. Ningún componente necesita UDP ni expone la IP real.
 
 > **Nota**: el navegador Firefox del SNH tiene `media.peerconnection.ice.default_address_only = true` por defecto, lo que limita los candidatos ICE a una sola interfaz. Esto mitiga parcialmente la filtración de IPs múltiples pero no el conflicto fundamental con Tor.
 
@@ -720,7 +1075,7 @@ El Solar Net Hub enruta tráfico por **Tor + Privoxy**. WebRTC, por diseño, nec
 
 Resumen ejecutivo (detalle completo en [PLAN_OASIS.md](./PLAN_OASIS.md)):
 
-La implementación depende de la **decisión arquitectónica de §2.2**. Se presentan ambos caminos:
+La implementación depende de la **decisión arquitectónica de §2.2**. Se presentan tres caminos:
 
 #### Camino A: node-datachannel + ffmpeg (plan original)
 
@@ -766,6 +1121,68 @@ La implementación depende de la **decisión arquitectónica de §2.2**. Se pres
 
 **Impacto del camino B**: las Fases 1, 2 y 4 son idénticas. La Fase 3 pasa de ~400 líneas de `media_capture.js` (orquestación ffmpeg + streams HTTP) a un fichero `go2rtc.yaml` de ~10 líneas + un binario de 15 MB. El coste es una dependencia externa (Go binary) en vez de código propio (Node.js). La ventaja es que go2rtc ya resuelve la transcodificación, multi-cliente, y serving — código probado por miles de despliegues en Home Assistant y Frigate.
 
+#### Camino C: Mumble (audio) + go2rtc (vídeo) + node-datachannel (datos) (§2.2 Arq. 3)
+
+| Fase | Alcance | Ficheros / componentes |
+|---|---|---|
+| **1. DataChannel** (solo texto) | Idéntico al camino A | `webrtc_model.js`, `webrtc_view.js`, `backend.js` |
+| **2. Señalización SSB** | Idéntico al camino A | `signaling/ssb.js`, `signaling/index.js` |
+| **3a. Audio** | murmurd (ya instalado) + bot bridge gumble → HTTP streaming | `mumble_bridge.go` (bot gumble, binario ~5 MB), `audio_endpoint.js` (~30 líneas endpoint HTTP) |
+| **3b. Vídeo** | go2rtc captura v4l2 → Oasis sirve HTML con URLs a go2rtc | `go2rtc.yaml` (config) |
+| **4. File transfer** | Idéntico al camino A | Extensión de `webrtc_model.js` |
+
+```
+  webrtc_view.js ─── renderiza HTML con <audio>, <img>/<video>, forms, mumble:// link
+       │
+  backend.js ───── rutas GET/POST /webrtc/* + proxy /webrtc/audio → bridge
+       │
+  webrtc_model.js ─ Session Manager: coordina mumble + go2rtc + datachannel
+       │
+       ├── mumble_bridge (child_process, Go binary)
+       │     └─ conecta a murmurd → PCM → ffmpeg → OGG/Opus HTTP
+       │
+       ├── go2rtc (binario independiente)
+       │     └─ v4l2/ALSA → MJPEG/HLS serving
+       │
+       ├── node-datachannel (solo DataChannel, sin media tracks)
+       │     └─ chat, files, señalización
+       │
+       └── signaling/ ───── abstracción: manual | ssb | ssb-lan
+```
+
+**Impacto del camino C**: las Fases 1, 2 y 4 son idénticas a los caminos A y B. La Fase 3 se divide en **audio (Mumble)** y **vídeo (go2rtc)**, eliminando la necesidad de media tracks en node-datachannel y la mayor parte de la lógica ffmpeg (solo queda re-encode del bridge).
+
+**Ventajas diferenciales del camino C**:
+
+| Aspecto | Camino A | Camino B | **Camino C** |
+|---|---|---|---|
+| **Código audio nuevo** | ~400 líneas (media_capture.js) | ~10 líneas (go2rtc.yaml audio) | ~100 líneas (bridge + endpoint) |
+| **Audio sobre Tor** | ⚠️ TURN/TCP, latencia >500 ms | ⚠️ Mismo problema | ✅ TCP tunnel nativo, ~100 ms |
+| **Calidad audio** | ffmpeg encode/decode, sin AGC | go2rtc re-encode | Opus nativo + AGC + echo cancel |
+| **Multi-usuario audio** | Implementar desde cero | Implementar desde cero | Nativo (canales Mumble) |
+| **Dependencias nuevas** | ffmpeg + node-datachannel (media) | go2rtc | go2rtc + gumble (~5 MB) |
+| **Reutiliza infra** | No | No | ✅ murmurd ya instalado |
+| **Riesgo principal** | Complejidad ffmpeg pipelines | Dependencia go2rtc para todo | Orquestación multi-servicio |
+
+**Ficheros nuevos del camino C** (no presentes en A ni B):
+
+| Fichero | Lenguaje | Líneas est. | Función |
+|---|---|---|---|
+| `mumble_bridge.go` | Go | ~150 | Bot gumble: conecta a murmurd, extrae PCM, escribe a stdout. Interface JSON por stdin para comandos (join/leave/inject). Compila a binario ARM64 estático. |
+| `audio_endpoint.js` | Node.js | ~30 | Middleware Koa que sirve `GET /webrtc/audio`: lanza `mumble_bridge | ffmpeg → OGG/Opus`, responde con `Transfer-Encoding: chunked`. |
+| `session_manager.js` | Node.js | ~100 | Extensión de `webrtc_model.js`: coordina ciclo de vida de llamada (crear canal Mumble, lanzar bridge, conectar go2rtc, iniciar DataChannel, renderizar vista). |
+| `go2rtc.yaml` | YAML | ~10 | Config go2rtc: solo vídeo v4l2, sin audio (Mumble se encarga). |
+
+**Riesgo y mitigación**:
+
+| Riesgo | Probabilidad | Impacto | Mitigación |
+|---|---|---|---|
+| **gumble no compila en ARM64** | Baja (Go cross-compile bien soportado) | Alto | Pre-compilar en CI; alternativa: pymumble en Python |
+| **Latencia bridge >300 ms** | Media (depende de ffmpeg buffer) | Medio | Reducir buffer ffmpeg (`-probesize 32 -analyzeduration 0`); alternativa: PCM WAV directo sin re-encode |
+| **Orquestación falla (proceso muere)** | Media | Alto | Supervisor simple (restart automático); health checks HTTP |
+| **murmurd no captura mic correcto** | Baja | Bajo | PulseAudio/ALSA config; `pavucontrol` para routing |
+| **Dos apps para el usuario remoto** | N/A (decisión UX) | Medio | Enlace `mumble://` en la UI; instrucciones claras; opción mumble-web como fallback |
+
 ---
 
 ## 4. Glosario
@@ -792,3 +1209,7 @@ La implementación depende de la **decisión arquitectónica de §2.2**. Se pres
 | **CSRF** | Cross-Site Request Forgery | Ataque donde un sitio malicioso envía requests a otro en nombre del usuario |
 | **CSP** | Content Security Policy | Cabecera HTTP que restringe qué recursos puede cargar/ejecutar una página |
 | **WHIP** | WebRTC-HTTP Ingestion Protocol | Estándar IETF para publicar streams WebRTC vía HTTP (complemento de WHEP) |
+| **murmurd** | Mumble Server Daemon | Servidor Mumble: gestiona canales, ACLs, usuarios, mezcla y retransmite audio Opus cifrado |
+| **OCB-AES128** | Offset Codebook Mode (AES-128) | Cifrado autenticado (AEAD) usado por Mumble para voice UDP; confidencialidad + integridad en un solo paso |
+| **gumble** | Go Mumble Library | Librería Go para implementar clientes/bots Mumble; incluye módulos ffmpeg y OpenAL |
+| **Protobuf** | Protocol Buffers (Google) | Formato binario de serialización usado por Mumble para mensajes de control sobre TCP |
