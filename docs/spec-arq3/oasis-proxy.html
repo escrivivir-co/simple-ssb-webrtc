@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SPEC · Oasis Proxy & Routes — Arq. 3</title>
+<link rel="stylesheet" href="../poster-template/fanzine.css">
+</head>
+<body>
+
+<div class="nav-back">
+  <a href="../poster-arq3.html">◀ VOLVER AL POSTER</a> · SPEC · OASIS PROXY
+</div>
+
+<header class="header" style="padding:18px 10px 14px;">
+  <div class="stamp">:3000</div>
+  <h1 style="font-size:1.8rem;">Oasis Proxy</h1>
+  <div class="sub">Routes, HLS + MJPEG, security headers</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ═══ ROUTING MAP ═══ -->
+<div class="cutout">
+  <h3>Mapa de Rutas — Arq. 3</h3>
+  <table class="tbl">
+    <tr><th>Route</th><th>Upstream</th><th>Content-Type</th><th>Propósito</th></tr>
+    <tr><td><b>GET /video</b></td><td>go2rtc :1984/api/frame.mjpeg</td><td>multipart/x-mixed-replace</td><td>MJPEG stream (LAN)</td></tr>
+    <tr><td><b>GET /video.m3u8</b></td><td>go2rtc :1984/api/stream.m3u8</td><td>application/vnd.apple.mpegurl</td><td>HLS playlist (remoto)</td></tr>
+    <tr><td><b>GET /snapshot</b></td><td>go2rtc :1984/api/frame.jpeg</td><td>image/jpeg</td><td>Frame único → SSB blob</td></tr>
+    <tr><td><b>GET /audio</b></td><td>Mumble bridge (interno)</td><td>audio/ogg</td><td>Audio downstream chunked</td></tr>
+    <tr><td><b>GET /cam</b></td><td>—</td><td>text/html</td><td>Vista LAN (template)</td></tr>
+    <tr><td><b>GET /remote</b></td><td>—</td><td>text/html</td><td>Vista remota HLS (template)</td></tr>
+    <tr><td><b>GET /status</b></td><td>go2rtc :1984/api/streams</td><td>application/json</td><td>Health check</td></tr>
+  </table>
+
+  <div class="key-concept"><b>Dos vistas</b>: /cam para LAN (MJPEG sin JS) y /remote para peers (HLS, puede necesitar hls.js). Rutas separadas → CSP separadas.</div>
+</div>
+
+<!-- ═══ PROXY IMPLEMENTATION ═══ -->
+<div class="cutout tilt-r">
+  <h3>Implementación Proxy — Node.js</h3>
+
+  <div style="font-size:0.72rem;font-weight:bold;margin-bottom:4px;">GET /video — MJPEG proxy</div>
+  <div class="cmd">const GO2RTC = 'http://127.0.0.1:1984';
+
+app.get('/video', (req, res) =&gt; {
+  const up = http.get(
+    `${GO2RTC}/api/frame.mjpeg?src=solar-cam`,
+    (mjpeg) =&gt; {
+      res.writeHead(200, {
+        'Content-Type': mjpeg.headers['content-type'],
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff'
+      });
+      mjpeg.pipe(res);
+    }
+  );
+  up.on('error', () =&gt; res.status(502).end('upstream down'));
+  req.on('close', () =&gt; up.destroy());
+});</div>
+
+  <div style="font-size:0.72rem;font-weight:bold;margin:10px 0 4px;">GET /video.m3u8 — HLS proxy (para remoto)</div>
+  <div class="cmd">app.get('/video.m3u8', (req, res) =&gt; {
+  const up = http.get(
+    `${GO2RTC}/api/stream.m3u8?src=solar-cam`,
+    (hls) =&gt; {
+      res.writeHead(200, {
+        'Content-Type': 'application/vnd.apple.mpegurl',
+        'Cache-Control': 'no-store'
+      });
+      hls.pipe(res);
+    }
+  );
+  up.on('error', () =&gt; res.status(502).end());
+  req.on('close', () =&gt; up.destroy());
+});</div>
+
+  <div style="font-size:0.72rem;font-weight:bold;margin:10px 0 4px;">GET /snapshot — JPEG</div>
+  <div class="cmd">app.get('/snapshot', (req, res) =&gt; {
+  const up = http.get(
+    `${GO2RTC}/api/frame.jpeg?src=solar-cam`,
+    (snap) =&gt; {
+      res.writeHead(200, {
+        'Content-Type': 'image/jpeg',
+        'Cache-Control': 'no-store'
+      });
+      snap.pipe(res);
+    }
+  );
+  up.on('error', () =&gt; res.status(502).end());
+  req.on('close', () =&gt; up.destroy());
+});</div>
+</div>
+
+<!-- ═══ TEMPLATES ═══ -->
+<div class="cutout">
+  <h3>Templates HTML</h3>
+
+  <div style="font-size:0.72rem;font-weight:bold;margin-bottom:4px;">Vista LAN — /cam (cero JS)</div>
+  <div class="cmd">&lt;img src="/video" alt="MJPEG stream"&gt;
+&lt;audio src="/audio" controls autoplay&gt;&lt;/audio&gt;
+&lt;p&gt;MJPEG · Mumble OGG · cero JavaScript&lt;/p&gt;</div>
+
+  <div style="font-size:0.72rem;font-weight:bold;margin:10px 0 4px;">Vista remota — /remote (HLS)</div>
+  <div class="cmd">&lt;video src="/video.m3u8" controls autoplay&gt;&lt;/video&gt;
+&lt;audio src="/audio" controls autoplay&gt;&lt;/audio&gt;
+&lt;p&gt;HLS H.264 · Mumble OGG&lt;/p&gt;</div>
+
+  <div class="warn">HLS nativo solo en Safari. Para Firefox/Chrome añadir hls.js en /remote (afecta al CSP de esa ruta).</div>
+</div>
+
+<!-- ═══ CSP ═══ -->
+<div class="cutout tilt-l">
+  <h3>Security Headers — Doble CSP</h3>
+
+  <div style="font-size:0.72rem;font-weight:bold;margin-bottom:4px;">CSP para /cam (LAN, cero JS)</div>
+  <div class="cmd">Content-Security-Policy:
+  default-src 'self';
+  img-src 'self';
+  media-src 'self';
+  style-src 'self' 'unsafe-inline';
+  <b>script-src 'none'</b></div>
+
+  <div style="font-size:0.72rem;font-weight:bold;margin:10px 0 4px;">CSP para /remote (si hls.js necesario)</div>
+  <div class="cmd">Content-Security-Policy:
+  default-src 'self';
+  img-src 'self';
+  media-src 'self' blob:;
+  style-src 'self' 'unsafe-inline';
+  <b>script-src 'self'</b>         <span class="comment">← permite hls.js local</span></div>
+
+  <div class="tip">Siempre incluir: <b>X-Content-Type-Options: nosniff</b>, <b>X-Frame-Options: SAMEORIGIN</b>, <b>Referrer-Policy: no-referrer</b>.</div>
+</div>
+
+<!-- ═══ DRY RULES ═══ -->
+<div class="cutout">
+  <h3>DRY Rules — Proxy Oasis</h3>
+  <div style="font-size:0.68rem;">
+    <b>1.</b> <b>const GO2RTC</b> = URL centralizada. Nunca hardcodear localhost:1984 en cada ruta.<br>
+    <b>2.</b> <b>req.on('close', () =&gt; up.destroy())</b> — siempre. Evitar socket leaks.<br>
+    <b>3.</b> <b>Cache-Control: no-store</b> — en todo stream. No cachear datos en vuelo.<br>
+    <b>4.</b> Un solo puerto público: <b>:3000</b>. go2rtc (:1984) y murmurd (:64738) son internos.<br>
+    <b>5.</b> <b>Dos CSP</b>: /cam (script-src 'none') y /remote (script-src 'self' si hls.js).<br>
+    <b>6.</b> <b>up.on('error')</b> — siempre manejar caída del upstream con 502.<br>
+  </div>
+</div>
+
+<!-- ═══ KEYWORDS ═══ -->
+<div class="cutout" style="text-align:center;">
+  <h3>Keywords</h3>
+  <span class="kw">proxy</span>
+  <span class="kw-inv">pipe(res)</span>
+  <span class="kw">CSP</span>
+  <span class="kw">HLS</span>
+  <span class="kw-inv">script-src 'none'</span>
+  <span class="kw">SAMEORIGIN</span>
+  <span class="kw-inv">:3000</span>
+  <span class="kw">no-store</span>
+  <span class="kw">upstream.destroy()</span>
+  <span class="kw-inv">MJPEG</span>
+  <span class="kw">.m3u8</span>
+  <span class="kw-inv">SSB blob</span>
+</div>
+
+<footer class="footer">
+  SPEC SUB-FILE · Oasis Proxy · Arq. 3 Poster ·
+  Fuente: web-rtc-ext.md EXT-5C
+</footer>
+
+</body>
+</html>

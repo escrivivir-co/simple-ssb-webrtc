@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SPEC · Oasis Proxy & Routes</title>
+<link rel="stylesheet" href="../poster-template/fanzine.css">
+</head>
+<body>
+
+<div class="nav-back">
+  <a href="../poster-arq6.html">◀ VOLVER AL POSTER</a> · SPEC · OASIS PROXY
+</div>
+
+<header class="header" style="padding:18px 10px 14px;">
+  <div class="stamp">:3000</div>
+  <h1 style="font-size:1.8rem;">Oasis Proxy</h1>
+  <div class="sub">Routes, templates &amp; security headers</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ═══ ROUTING MAP ═══ -->
+<div class="cutout">
+  <h3>Mapa de Rutas — Arq. 6</h3>
+  <table class="tbl">
+    <tr><th>Route</th><th>Upstream</th><th>Content-Type</th><th>Propósito</th></tr>
+    <tr><td><b>GET /video</b></td><td>µStreamer :8080/stream</td><td>multipart/x-mixed-replace</td><td>MJPEG stream continuo</td></tr>
+    <tr><td><b>GET /snapshot</b></td><td>µStreamer :8080/snapshot</td><td>image/jpeg</td><td>Frame único para thumbnails / SSB blob</td></tr>
+    <tr><td><b>GET /audio</b></td><td>Mumble bridge (interno)</td><td>audio/ogg</td><td>Audio downstream chunked</td></tr>
+    <tr><td><b>GET /cam</b></td><td>—</td><td>text/html</td><td>Vista unificada (template webrtc_view)</td></tr>
+    <tr><td><b>GET /status</b></td><td>µStreamer :8080/state</td><td>application/json</td><td>Health check JSON (fps, encoder, clients)</td></tr>
+  </table>
+</div>
+
+<!-- ═══ KEY CONCEPT: WHY PROXY ═══ -->
+<div class="cutout tilt-r">
+  <h3>Key Concept: ¿Por Qué Proxy y No Redirect?</h3>
+  <div class="key-concept">
+    µStreamer escucha en <b>127.0.0.1:8080</b>. El browser del peer no tiene acceso directo a localhost del SNH. Oasis hace proxy del stream, exponiendo un <b>solo puerto (:3000)</b> con headers de seguridad controlados.
+  </div>
+
+  <table class="tbl" style="margin-top:8px;">
+    <tr><th>Enfoque</th><th>Puertos expuestos</th><th>CORS/CSP control</th><th>Tor friendly</th></tr>
+    <tr><td>Redirect → :8080</td><td>2 (:3000 + :8080)</td><td>✘ No</td><td>✘ (2 hidden services)</td></tr>
+    <tr><td><b>Proxy (recomendado)</b></td><td><b>1 (:3000)</b></td><td><b>✔ Total</b></td><td><b>✔ (1 hidden service)</b></td></tr>
+  </table>
+</div>
+
+<!-- ═══ PROXY IMPLEMENTATION ═══ -->
+<div class="cutout">
+  <h3>Implementación Proxy — Node.js</h3>
+
+  <div style="font-size:0.72rem;font-weight:bold;margin-bottom:4px;">GET /video — MJPEG stream proxy</div>
+  <div class="cmd"><span class="comment">// Proxy µStreamer MJPEG stream → browser</span>
+const http = require('http');
+
+app.get('/video', (req, res) =&gt; {
+  const upstream = http.get(
+    'http://127.0.0.1:8080/stream',
+    (mjpeg) =&gt; {
+      res.writeHead(200, {
+        'Content-Type': mjpeg.headers['content-type'],
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff'
+      });
+      mjpeg.pipe(res);
+    }
+  );
+  upstream.on('error', (err) =&gt; {
+    res.status(502).end('upstream down');
+  });
+  req.on('close', () =&gt; upstream.destroy());
+});</div>
+
+  <div class="tip"><b>req.on('close')</b>: destruir el upstream cuando el browser cierra la pestaña. Sin esto, los sockets se acumulan y µStreamer cuenta "clientes fantasma".</div>
+
+  <div style="font-size:0.72rem;font-weight:bold;margin:10px 0 4px;">GET /snapshot — JPEG single frame</div>
+  <div class="cmd">app.get('/snapshot', (req, res) =&gt; {
+  const upstream = http.get(
+    'http://127.0.0.1:8080/snapshot',
+    (snap) =&gt; {
+      res.writeHead(200, {
+        'Content-Type': 'image/jpeg',
+        'Cache-Control': 'no-store'
+      });
+      snap.pipe(res);
+    }
+  );
+  upstream.on('error', () =&gt; res.status(502).end());
+  req.on('close', () =&gt; upstream.destroy());
+});</div>
+
+  <div style="font-size:0.72rem;font-weight:bold;margin:10px 0 4px;">GET /audio — Mumble bridge OGG</div>
+  <div class="cmd"><span class="comment">// audioBridge = readable stream del bridge Mumble→OGG</span>
+app.get('/audio', (req, res) =&gt; {
+  res.writeHead(200, {
+    'Content-Type': 'audio/ogg',
+    'Transfer-Encoding': 'chunked',
+    'Cache-Control': 'no-store'
+  });
+  audioBridge.pipe(res);
+  req.on('close', () =&gt; audioBridge.unpipe(res));
+});</div>
+</div>
+
+<!-- ═══ HTML TEMPLATE ═══ -->
+<div class="cutout tilt-l">
+  <h3>Template: webrtc_view (cero JS)</h3>
+  <div class="cmd"><span class="comment">&lt;!-- views/webrtc_view.ejs — lo que sirve GET /cam --&gt;</span>
+&lt;!DOCTYPE html&gt;
+&lt;html lang="es"&gt;
+&lt;head&gt;
+  &lt;meta charset="UTF-8"&gt;
+  &lt;meta name="viewport" content="width=device-width,initial-scale=1"&gt;
+  &lt;title&gt;SNH — Cámara&lt;/title&gt;
+  &lt;style&gt;
+    body { margin:0; background:#111; color:#eee;
+           font-family:monospace; text-align:center; }
+    img  { max-width:100%; height:auto; display:block; margin:0 auto; }
+    audio { margin:12px auto; display:block; }
+    .meta { font-size:0.7rem; opacity:0.5; margin:8px; }
+  &lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+
+  &lt;img src="/video" alt="MJPEG stream"&gt;
+  &lt;audio src="/audio" controls autoplay&gt;&lt;/audio&gt;
+
+  &lt;p class="meta"&gt;
+    µStreamer MJPEG · Mumble OGG · cero JavaScript
+  &lt;/p&gt;
+
+&lt;/body&gt;
+&lt;/html&gt;</div>
+
+  <div class="key-concept">
+    <b>Cero JS</b>: el browser nativo del SNH (Oasis) renderiza HTML/CSS puro. &lt;img&gt; con MJPEG se actualiza automáticamente (el browser lo maneja nativamente). &lt;audio&gt; con OGG chunked hace autoplay sin scripts.
+  </div>
+</div>
+
+<!-- ═══ SECURITY HEADERS ═══ -->
+<div class="cutout">
+  <h3>Security Headers — Oasis Middleware</h3>
+  <div class="cmd"><span class="comment">// Helmet-style headers (sin dependencia externa)</span>
+app.use((req, res, next) =&gt; {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Content-Security-Policy',
+    "default-src 'self'; " +
+    "img-src 'self'; " +
+    "media-src 'self'; " +
+    "style-src 'self' 'unsafe-inline'; " +
+    "script-src 'none'"  // ← cero JS
+  );
+  next();
+});</div>
+
+  <div class="tip"><b>script-src 'none'</b>: refuerza a nivel de CSP que no se ejecute JS. Doble seguridad: no lo servimos Y el browser no lo aceptaría.</div>
+</div>
+
+<!-- ═══ HEALTH CHECK ═══ -->
+<div class="cutout tilt-r">
+  <h3>Health Check Pattern</h3>
+  <div class="cmd"><span class="comment">// GET /status — proxy al JSON de µStreamer + Mumble liveness</span>
+app.get('/status', async (req, res) =&gt; {
+  const [ustreamer, mumble] = await Promise.allSettled([
+    fetch('http://127.0.0.1:8080/state').then(r =&gt; r.json()),
+    checkMumbleAlive(64738)
+  ]);
+  res.json({
+    video: ustreamer.status === 'fulfilled'
+      ? { ok: true, ...ustreamer.value }
+      : { ok: false },
+    audio: { ok: mumble.status === 'fulfilled' },
+    uptime: process.uptime()
+  });
+});</div>
+</div>
+
+<!-- ═══ DRY RULES ═══ -->
+<div class="cutout tilt-l">
+  <h3>DRY Rules for Oasis Routes</h3>
+  <div style="font-size:0.68rem;">
+    <b>1.</b> Toda upstream es <b>127.0.0.1</b> — nunca exponer puertos internos al exterior.<br>
+    <b>2.</b> Siempre <b>destroy upstream on req close</b> — evitar socket leaks.<br>
+    <b>3.</b> Siempre <b>Cache-Control: no-store</b> en streams — no cachear datos en vuelo.<br>
+    <b>4.</b> Un solo puerto público: <b>:3000</b> — todo lo demás es localhost.<br>
+    <b>5.</b> CSP con <b>script-src 'none'</b> — garantía doble de cero JS.<br>
+    <b>6.</b> Para snapshots, considerar guardar como <b>SSB blob</b> (inmutable, direccionable por hash).<br>
+  </div>
+</div>
+
+<!-- ═══ KEYWORDS ═══ -->
+<div class="cutout" style="text-align:center;">
+  <h3>Keywords</h3>
+  <span class="kw">proxy</span>
+  <span class="kw-inv">pipe(res)</span>
+  <span class="kw">CSP</span>
+  <span class="kw">no-store</span>
+  <span class="kw-inv">script-src 'none'</span>
+  <span class="kw">SAMEORIGIN</span>
+  <span class="kw">upstream.destroy()</span>
+  <span class="kw-inv">:3000</span>
+  <span class="kw">chunked</span>
+  <span class="kw">OGG</span>
+  <span class="kw-inv">MJPEG</span>
+  <span class="kw">SSB blob</span>
+</div>
+
+<footer class="footer">
+  SPEC SUB-FILE · Oasis Proxy &amp; Routes · Arq. 6 Poster ·
+  Fuente: web-rtc-ext.md EXT-10B §9.5
+</footer>
+
+</body>
+</html>

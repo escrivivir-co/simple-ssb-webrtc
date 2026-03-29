@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Arq. 4 — ffmpeg → HLS estático</title>
+<link rel="stylesheet" href="poster-template/fanzine.css">
+</head>
+<body>
+
+<div class="nav-back"><a href="index.html">◀ ÍNDICE</a></div>
+
+<header class="header">
+  <div class="stamp">ARQ. 4</div>
+  <h1>ffmpeg → HLS estático</h1>
+  <div class="sub">La más simple posible — ffmpeg escribe segmentos .ts, Oasis los sirve como ficheros estáticos</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ═══ STATS BAR ═══ -->
+<div class="cutout" style="display:flex;flex-wrap:wrap;justify-content:center;gap:18px;font-size:0.75rem;font-weight:bold;text-align:center;">
+  <div>RAM<br><span style="font-size:1.5rem;">~30</span> MB</div>
+  <div>CPU<br><span style="font-size:1.5rem;">10–25</span>%</div>
+  <div>Latencia<br><span style="font-size:1.5rem;">4–12</span> s</div>
+  <div>Complejidad<br><span style="font-size:1.5rem;">Mínima</span></div>
+  <div>Prioridad<br><span style="font-size:1.5rem;">5ª</span></div>
+</div>
+
+<!-- ═══ ARCHITECTURE DIAGRAM ═══ -->
+<div class="cutout tilt-r">
+  <h3>Diagrama de Arquitectura</h3>
+  <pre class="ascii-diagram">
+┌──────────────────────────────────────────────────────┐
+│              Raspberry Pi 3B (Debian / Docker)       │
+│                                                      │
+│  ┌────────────┐         ┌────────┐       ┌─────────┐│
+│  │ 🎥 Cam     │─v4l2──▶│ ffmpeg │──.ts─▶│ /var/   ││
+│  │   CSI/USB  │         │        │  .m3u8│ www/    ││
+│  │ 🎤 Mic USB │─ALSA──▶│ (~30MB)│──────▶│ stream/ ││
+│  └────────────┘         └────────┘       └────┬────┘│
+│                                               │     │
+│                                          ┌────┴────┐│
+│                                          │  Oasis  ││
+│                                          │  :3000  ││
+│                                          │  static ││
+│                                          └────┬────┘│
+└───────────────────────────────────────────────┼─────┘
+                                                │
+                                     ┌──────────┴──────────┐
+                                     │  Navegador (cero JS)│
+                                     │                     │
+                                     │  &lt;video             │
+                                     │   src="/stream/     │
+                                     │        live.m3u8"   │
+                                     │   autoplay muted    │
+                                     │   playsinline       │
+                                     │   controls&gt;         │
+                                     │  &lt;/video&gt;           │
+                                     └─────────────────────┘</pre>
+</div>
+
+<!-- ═══ KEY CONCEPT ═══ -->
+<div class="cutout tilt-l">
+  <h3>El concepto</h3>
+  <div class="key-concept">
+    <b>Sin servidor media, sin node-datachannel, sin paquetes npm para media.</b> Solo ffmpeg escribiendo segmentos HLS a disco y Oasis sirviéndolos como ficheros estáticos. Es la arquitectura de mínima complejidad: un solo comando ffmpeg + un directorio estático. Funciona en Chrome/Safari sin JS.
+  </div>
+</div>
+
+<!-- ═══ THE COMMAND ═══ -->
+<div class="cutout">
+  <h3>El Comando</h3>
+  <div class="cmd">ffmpeg -f v4l2 -i /dev/video0 \
+       -f alsa -i default \
+       -c:v libx264 -preset ultrafast -tune zerolatency \
+       -c:a aac -b:a 64k \
+       -f hls -hls_time 2 -hls_list_size 5 \
+       -hls_flags delete_segments \
+       /var/www/stream/live.m3u8</div>
+  <div class="tip">Un solo comando. Captura vídeo (V4L2) y audio (ALSA), codifica H.264 + AAC, genera segmentos HLS de 2 s con ventana deslizante de 5 segmentos (~10 s). Borra segmentos antiguos automáticamente.</div>
+</div>
+
+<!-- ═══ HTML ═══ -->
+<div class="cutout tilt-r">
+  <h3>HTML del Consumidor</h3>
+  <div class="cmd">&lt;video src="/stream/live.m3u8"
+       autoplay muted playsinline controls&gt;
+&lt;/video&gt;</div>
+  <div class="key-concept">Oasis sirve <code>/var/www/stream/</code> como directorio estático. El browser consume el .m3u8 nativamente (Safari siempre; Chrome 142+ con soporte MSE mejorado). Sin JS, sin WebSocket, sin signaling.</div>
+</div>
+
+<!-- ═══ PARAMETERS ═══ -->
+<div class="cutout tilt-l">
+  <h3>Parámetros ffmpeg explicados</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Parámetro</th><th>Valor</th><th>Por qué</th></tr>
+    <tr><td>-f v4l2 -i /dev/video0</td><td>Captura V4L2</td><td>Funciona con CSI (vía bcm2835-v4l2) y USB</td></tr>
+    <tr><td>-f alsa -i default</td><td>Captura ALSA</td><td>Micrófono USB, device por defecto</td></tr>
+    <tr><td>-c:v libx264</td><td>Encode H.264 sw</td><td>ultrafast = mínimo CPU; alt: h264_v4l2m2m (HW)</td></tr>
+    <tr><td>-preset ultrafast</td><td>Velocidad máx.</td><td>Calidad baja pero ~10% CPU vs ~40% con medium</td></tr>
+    <tr><td>-tune zerolatency</td><td>Sin buffer</td><td>Reduce latencia encode ~200 ms</td></tr>
+    <tr><td>-c:a aac -b:a 64k</td><td>Audio AAC</td><td>Compatible con HLS; 64k suficiente para voz</td></tr>
+    <tr><td>-hls_time 2</td><td>Segmentos de 2 s</td><td>Balance latencia/overhead. Mín. práctico ~1 s</td></tr>
+    <tr><td>-hls_list_size 5</td><td>Ventana 5 seg.</td><td>~10 s de buffer. Evita acumulación infinita</td></tr>
+    <tr><td>-hls_flags delete_segments</td><td>Borrar viejos</td><td>Evita llenar la microSD</td></tr>
+  </table>
+</div>
+
+<!-- ═══ CSI vs USB ═══ -->
+<div class="cutout">
+  <h3>CSI vs USB: variante del comando</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th></th><th>CSI</th><th>USB (MJPEG)</th><th>USB (H.264 HW)</th></tr>
+    <tr><td><b>Encode</b></td><td>rpicam-vid→pipe o libx264</td><td>libx264 / h264_v4l2m2m</td><td>-c:v copy (passthrough)</td></tr>
+    <tr><td><b>CPU</b></td><td>~5% (HW) / ~15% (SW)</td><td>~15–25%</td><td>~3%</td></tr>
+    <tr><td><b>Nota</b></td><td>Alt: rpicam-vid --codec h264 -o - | ffmpeg -f h264 -i - …</td><td>Decode MJPEG + encode H.264</td><td>Mejor caso USB</td></tr>
+  </table>
+  <div class="cmd"><span class="comment"># Variante CSI con HW encode (menor CPU):</span>
+rpicam-vid -t 0 --codec h264 --inline -w 1280 -h 720 -o - | \
+  ffmpeg -f h264 -i - -f alsa -i default \
+         -c:v copy -c:a aac -b:a 64k \
+         -f hls -hls_time 2 -hls_list_size 5 \
+         -hls_flags delete_segments \
+         /var/www/stream/live.m3u8
+
+<span class="comment"># Variante USB con H.264 HW encode del RPi:</span>
+ffmpeg -f v4l2 -input_format mjpeg -video_size 1280x720 \
+       -i /dev/video0 -f alsa -i default \
+       -c:v h264_v4l2m2m -b:v 1M -c:a aac -b:a 64k \
+       -f hls -hls_time 2 -hls_list_size 5 \
+       -hls_flags delete_segments \
+       /var/www/stream/live.m3u8</div>
+</div>
+
+<!-- ═══ WHAT YOU GET ═══ -->
+<div class="cutout tilt-r">
+  <h3>Lo que obtienes</h3>
+  <table class="tbl" style="font-size:0.65rem;">
+    <tr><th>✔ Tienes</th><th>✘ No tienes</th></tr>
+    <tr><td>Vídeo + audio en browser sin JS</td><td>Latencia baja (4–12 s mínimo)</td></tr>
+    <tr><td>Complejidad mínima absoluta</td><td>Audio/vídeo bidireccional</td></tr>
+    <tr><td>Funciona sobre Tor (HTTP puro)</td><td>MJPEG (solo HLS)</td></tr>
+    <tr><td>~20 líneas de código total</td><td>Snapshots JPEG nativos</td></tr>
+    <tr><td>Safari nativo, Chrome 142+</td><td>WebRTC / P2P real</td></tr>
+    <tr><td>Sin dependencias nuevas (ffmpeg ya instalado)</td><td>Multi-protocolo (solo HLS)</td></tr>
+  </table>
+</div>
+
+<!-- ═══ COMPARATIVA ═══ -->
+<div class="cutout tilt-l">
+  <h3>Comparativa directa</h3>
+  <table class="tbl" style="font-size:0.55rem;">
+    <tr><th></th><th>Arq. 4 (ffmpeg→HLS)</th><th>Arq. 1 (go2rtc)</th><th>Arq. 6 (µStreamer)</th></tr>
+    <tr><td><b>Complejidad</b></td><td><span class="hl-box">Mínima</span></td><td>Baja</td><td>Baja</td></tr>
+    <tr><td><b>Latencia vídeo</b></td><td>4–12 s</td><td><span class="hl-box">100–300 ms</span></td><td><span class="hl-box">100–300 ms</span></td></tr>
+    <tr><td><b>Latencia audio</b></td><td>4–12 s</td><td>200 ms–2 s</td><td>~200 ms (Mumble)</td></tr>
+    <tr><td><b>Bidireccional</b></td><td>✘</td><td>✔ WHEP</td><td>✔ (Mumble)</td></tr>
+    <tr><td><b>ffmpeg</b></td><td>Sí (permanente)</td><td><b>No</b></td><td><b>No</b></td></tr>
+    <tr><td><b>Escrit. µSD</b></td><td><span class="hl-box">⚠ Constante</span></td><td>No</td><td>No</td></tr>
+    <tr><td><b>Tor</b></td><td>✔ (HTTP puro)</td><td>⚠ TURN</td><td>⚠ HTTP solo</td></tr>
+    <tr><td><b>Formatos</b></td><td>Solo HLS</td><td>MJPEG+HLS+WHEP+RTSP</td><td>Solo MJPEG</td></tr>
+    <tr><td><b>RAM</b></td><td>~30 MB</td><td>~20–40 MB</td><td>~5–15 MB</td></tr>
+    <tr><td><b>Binario extra</b></td><td>No (ffmpeg existe)</td><td>Sí (~15 MB Go)</td><td>Sí (~1 MB C)</td></tr>
+  </table>
+</div>
+
+<!-- ═══ RISKS ═══ -->
+<div class="cutout">
+  <h3>Riesgos Críticos</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Riesgo</th><th>Impacto</th><th>Mitigación</th></tr>
+    <tr>
+      <td><b>Escritura constante a microSD</b></td>
+      <td><span class="hl-box">ALTO</span> — segmentos .ts cada 2 s → desgaste flash, especialmente en RPi solar sin UPS</td>
+      <td>Montar /var/www/stream en tmpfs (RAM): <code>mount -t tmpfs -o size=20m tmpfs /var/www/stream</code></td>
+    </tr>
+    <tr>
+      <td>Latencia inherente HLS (4–12 s)</td>
+      <td>Alto — inaceptable para vigilancia o interacción en tiempo real</td>
+      <td>Reducir hls_time a 1 s (ayuda poco). Para &lt;1 s necesitas MJPEG → Arq. 1/6</td>
+    </tr>
+    <tr>
+      <td>ffmpeg CPU constante</td>
+      <td>Medio — encode SW ~15–25% CPU permanente mientras haya stream</td>
+      <td>h264_v4l2m2m para HW encode (CSI: rpicam-vid pipe, USB: v4l2m2m)</td>
+    </tr>
+    <tr>
+      <td>Sin bidireccionalidad</td>
+      <td>Medio — no hay canal de vuelta para audio ni datos</td>
+      <td>Añadir Mumble para audio retorno → se convierte en Arq. 3</td>
+    </tr>
+    <tr>
+      <td>Firefox no soporta HLS nativo</td>
+      <td>Bajo — Firefox requiere JS (hls.js) para HLS→MSE</td>
+      <td>Aceptar limitación o añadir MJPEG fallback → ya no es Arq. 4</td></tr>
+  </table>
+</div>
+
+<!-- ═══ TMPFS ═══ -->
+<div class="cutout tilt-r">
+  <h3>tmpfs: mitigar escritura a SD</h3>
+  <div class="cmd"><span class="comment"># /etc/fstab — montar stream en RAM</span>
+tmpfs /var/www/stream tmpfs defaults,noatime,size=20m 0 0
+
+<span class="comment"># O manualmente:</span>
+mount -t tmpfs -o size=20m tmpfs /var/www/stream</div>
+  <div class="key-concept">Con 5 segmentos × 2 s a ~500 KB/seg = ~5 MB rotando. 20 MB de tmpfs es sobrado. Coste: 20 MB de RAM extra (~50 MB total para Arq. 4). Pero elimina el riesgo de desgaste flash.</div>
+</div>
+
+<!-- ═══ SYSTEMD ═══ -->
+<div class="cutout">
+  <h3>systemd (si se necesita)</h3>
+  <div class="cmd"><span class="comment"># /etc/systemd/system/ffmpeg-hls.service</span>
+[Unit]
+Description=ffmpeg HLS streaming
+After=network-online.target
+RequiresMountsFor=/var/www/stream
+
+[Service]
+Type=simple
+User=ffmpeg
+Group=video,audio
+ExecStartPre=/bin/mkdir -p /var/www/stream
+ExecStart=/usr/bin/ffmpeg \
+  -f v4l2 -i /dev/video0 \
+  -f alsa -i default \
+  -c:v libx264 -preset ultrafast -tune zerolatency \
+  -c:a aac -b:a 64k \
+  -f hls -hls_time 2 -hls_list_size 5 \
+  -hls_flags delete_segments \
+  /var/www/stream/live.m3u8
+Restart=on-failure
+RestartSec=5
+MemoryMax=80M
+CPUQuota=40%
+
+[Install]
+WantedBy=multi-user.target</div>
+</div>
+
+<!-- ═══ WHEN TO USE ═══ -->
+<div class="cutout tilt-l">
+  <h3>¿Cuándo elegir Arq. 4?</h3>
+  <div class="key-concept">
+    <b>Casi nunca.</b> La Arq. 4 existe como baseline teórico — demuestra que se puede hacer streaming con cero infraestructura nueva. Pero en la práctica:
+    <ul style="margin:8px 0 0 16px;font-size:0.7rem;">
+      <li>Si quieres <b>baja latencia</b> → Arq. 1 (go2rtc) o Arq. 6 (µStreamer)</li>
+      <li>Si quieres <b>bidireccional</b> → Arq. 3 (Mumble) o Arq. 1 (WHEP)</li>
+      <li>Si quieres <b>mínima RAM</b> → Arq. 6 (µStreamer, ~10 MB)</li>
+      <li>Si quieres <b>Tor</b> → Arq. 3 (Mumble TCP)</li>
+      <li>Si no quieres <b>instalar nada nuevo</b> y ffmpeg ya está → Arq. 4 ✔</li>
+    </ul>
+    Su único caso válido: un prototipo rápido para demostrar que el pipeline funciona antes de elegir la arquitectura real.
+  </div>
+</div>
+
+<!-- ═══ KEYWORDS ═══ -->
+<div class="cutout" style="text-align:center;">
+  <span class="kw">ffmpeg</span>
+  <span class="kw-inv">HLS</span>
+  <span class="kw">.m3u8</span>
+  <span class="kw-inv">.ts</span>
+  <span class="kw">estático</span>
+  <span class="kw-inv">tmpfs</span>
+  <span class="kw">ultrafast</span>
+  <span class="kw-inv">zero-infra</span>
+  <span class="kw">baseline</span>
+  <span class="kw-inv">5ª prioridad</span>
+</div>
+
+<footer class="footer">
+  Arq. 4 · ffmpeg → HLS estático · SSB-WebRTC · Solar Net Hub<br>
+  <span style="font-size:0.6rem;">web-rtc.md §2.2 Arq. 4 + §2.2 Comparativa</span>
+</footer>
+
+</body>
+</html>

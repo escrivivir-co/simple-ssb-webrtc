@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SPEC · Deploy & Operations</title>
+<link rel="stylesheet" href="../poster-template/fanzine.css">
+</head>
+<body>
+
+<div class="nav-back">
+  <a href="../poster-arq6.html">◀ VOLVER AL POSTER</a> · SPEC · DEPLOY
+</div>
+
+<header class="header" style="padding:18px 10px 14px;">
+  <div class="stamp">OPS</div>
+  <h1 style="font-size:1.8rem;">Deploy &amp; Ops</h1>
+  <div class="sub">systemd · Docker · monitoring · checklist</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ═══ STACK SUMMARY ═══ -->
+<div class="cutout">
+  <h3>Stack — Qué Corre Dónde</h3>
+<pre class="diagram">
+ ┌─────────────────────────────────────────────────────┐
+ │              RPi 3B — Yocto Poky 4.3.4              │
+ │              └─ Docker (Bookworm container)          │
+ │                                                      │
+ │  systemd                                             │
+ │  ├── murmurd.service      (:64738)  ← ya existente  │
+ │  ├── ustreamer.service    (:8080)   ← NUEVO         │
+ │  └── oasis.service        (:3000)   ← ya existente  │
+ │       └── audio-bridge    (interno)                  │
+ │       └── node-datachannel (interno)                 │
+ └─────────────────────────────────────────────────────┘
+</pre>
+</div>
+
+<!-- ═══ SYSTEMD UNITS ═══ -->
+<div class="cutout tilt-r">
+  <div class="tape tape-tl"></div>
+  <h3>systemd Units — Copy-Paste Ready</h3>
+
+  <div style="font-size:0.72rem;font-weight:bold;margin-bottom:6px;">ustreamer.service (NUEVO)</div>
+  <div class="cmd"><span class="comment"># /etc/systemd/system/ustreamer.service</span>
+[Unit]
+Description=µStreamer MJPEG server
+After=network.target
+
+[Service]
+Type=simple
+User=video
+ExecStartPre=/sbin/modprobe bcm2835-v4l2
+ExecStart=/usr/bin/ustreamer \
+    --host 127.0.0.1 \
+    --port 8080 \
+    --encoder=m2m-image \
+    --workers=3 \
+    --resolution=1280x720 \
+    --desired-fps=15 \
+    --drop-same-frames=20
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target</div>
+
+  <div class="tip">Para cámara <b>USB</b>: quitar ExecStartPre, cambiar --encoder a cpu, añadir --device=/dev/video0</div>
+
+  <div style="font-size:0.72rem;font-weight:bold;margin:10px 0 6px;">Habilitar y arrancar</div>
+  <div class="cmd"><span class="prompt">sudo systemctl daemon-reload</span>
+<span class="prompt">sudo systemctl enable --now ustreamer.service</span>
+<span class="prompt">sudo systemctl status ustreamer.service</span></div>
+</div>
+
+<!-- ═══ DOCKER ═══ -->
+<div class="cutout">
+  <h3>Docker — Integración con Container Bookworm</h3>
+
+  <div class="key-concept">
+    El SNH corre Yocto Poky 4.3.4 como host, con un container Docker Debian Bookworm. µStreamer corre <b>dentro del container</b> pero necesita acceso a /dev/video* del host.
+  </div>
+
+  <div class="cmd"><span class="comment"># docker-compose.yml (fragmento)</span>
+services:
+  snh:
+    image: snh-bookworm:latest
+    devices:
+      - /dev/video0:/dev/video0    # cámara
+      - /dev/video11:/dev/video11  # M2M encoder (si CSI)
+    ports:
+      - "3000:3000"    # Oasis (único puerto público)
+    # µStreamer :8080 y murmurd :64738 son solo internos
+    volumes:
+      - mumble-data:/var/lib/mumble
+    cap_add:
+      - SYS_RAWIO  # para V4L2 M2M si es necesario</div>
+
+  <div class="warn"><b>No exponer :8080 ni :64738</b> en ports. Solo :3000 sale al exterior. Los servicios internos se comunican via localhost dentro del container.</div>
+
+  <div style="font-size:0.72rem;font-weight:bold;margin:10px 0 6px;">Verificar devices dentro del container</div>
+  <div class="cmd"><span class="prompt">docker exec -it snh ls -la /dev/video*</span>
+<span class="prompt">docker exec -it snh v4l2-ctl --list-devices</span></div>
+</div>
+
+<!-- ═══ MONITORING ═══ -->
+<div class="cutout tilt-l">
+  <h3>Monitoring — Health Checks</h3>
+
+  <div style="font-size:0.72rem;font-weight:bold;margin-bottom:6px;">Script de health check (crontab cada 5 min)</div>
+  <div class="cmd"><span class="comment">#!/bin/bash — /usr/local/bin/snh-health.sh</span>
+
+<span class="comment"># Video: µStreamer alive?</span>
+curl -sf http://127.0.0.1:8080/state &gt; /dev/null \
+  || systemctl restart ustreamer.service
+
+<span class="comment"># Audio: murmurd alive?</span>
+ss -tlnp | grep -q :64738 \
+  || systemctl restart mumble-server.service
+
+<span class="comment"># Oasis: alive?</span>
+curl -sf http://127.0.0.1:3000/ &gt; /dev/null \
+  || systemctl restart oasis.service</div>
+
+  <div style="font-size:0.72rem;font-weight:bold;margin:10px 0 6px;">Crontab entry</div>
+  <div class="cmd"><span class="prompt">crontab -e</span>
+*/5 * * * * /usr/local/bin/snh-health.sh 2&gt;&amp;1 | logger -t snh-health</div>
+
+  <div style="font-size:0.72rem;font-weight:bold;margin:10px 0 6px;">RAM monitoring (alerta si &lt;100 MB libre)</div>
+  <div class="cmd"><span class="comment"># En snh-health.sh, añadir:</span>
+FREE_MB=$(free -m | awk '/^Mem:/{print $7}')
+if [ "$FREE_MB" -lt 100 ]; then
+  logger -t snh-health -p warning "LOW RAM: ${FREE_MB}MB free"
+fi</div>
+</div>
+
+<!-- ═══ PRE-FLIGHT CHECKLIST ═══ -->
+<div class="cutout">
+  <div class="tape tape-tr"></div>
+  <h3>Pre-Flight Checklist</h3>
+  <table class="tbl">
+    <tr><th>#</th><th>Check</th><th>Comando</th><th>Esperado</th></tr>
+    <tr><td>1</td><td>Cámara detectada</td><td>v4l2-ctl --list-devices</td><td>/dev/video0 aparece</td></tr>
+    <tr><td>2</td><td>M2M encoder (CSI)</td><td>ls /dev/video1*</td><td>/dev/video11 (bcm2835-codec)</td></tr>
+    <tr><td>3</td><td>User en grupo video</td><td>groups</td><td>"video" aparece</td></tr>
+    <tr><td>4</td><td>µStreamer instalado</td><td>which ustreamer</td><td>/usr/bin/ustreamer</td></tr>
+    <tr><td>5</td><td>µStreamer arranca</td><td>curl localhost:8080/state</td><td>JSON con fps &gt; 0</td></tr>
+    <tr><td>6</td><td>MJPEG stream</td><td>curl -I localhost:8080/stream</td><td>200 + multipart/*</td></tr>
+    <tr><td>7</td><td>murmurd activo</td><td>ss -tlnp | grep 64738</td><td>LISTEN</td></tr>
+    <tr><td>8</td><td>Oasis activo</td><td>curl -I localhost:3000</td><td>200</td></tr>
+    <tr><td>9</td><td>Proxy video</td><td>curl -I localhost:3000/video</td><td>200 + multipart/*</td></tr>
+    <tr><td>10</td><td>RAM available</td><td>free -m | awk '/Mem/{print $7}'</td><td>&gt; 200 MB</td></tr>
+  </table>
+</div>
+
+<!-- ═══ BOOT ORDER ═══ -->
+<div class="cutout tilt-r">
+  <h3>Boot Order — Dependencias</h3>
+<pre class="diagram">
+  [kernel modules]
+       │ modprobe bcm2835-v4l2 + bcm2835-codec
+       ▼
+  [murmurd]  ← ya existente, sin deps nuevas
+       │
+  [ustreamer] ← After=network.target
+       │
+  [oasis]     ← After=ustreamer.service mumble-server.service
+       ├── audio-bridge (child process)
+       └── node-datachannel (in-process)
+</pre>
+
+  <div class="tip">Añadir <b>After=ustreamer.service mumble-server.service</b> en oasis.service para que el proxy no falle al arrancar antes que los upstreams.</div>
+</div>
+
+<!-- ═══ LOG COMMANDS ═══ -->
+<div class="cutout">
+  <h3>Logs — Comandos Útiles</h3>
+  <div class="cmd"><span class="comment"># Ver logs de µStreamer</span>
+<span class="prompt">journalctl -u ustreamer -f --no-pager</span>
+
+<span class="comment"># Ver logs de murmurd</span>
+<span class="prompt">journalctl -u mumble-server -f --no-pager</span>
+
+<span class="comment"># Ver logs de Oasis</span>
+<span class="prompt">journalctl -u oasis -f --no-pager</span>
+
+<span class="comment"># Ver health checks</span>
+<span class="prompt">journalctl -t snh-health --since "1 hour ago"</span>
+
+<span class="comment"># RAM snapshot</span>
+<span class="prompt">free -m &amp;&amp; ps aux --sort=-%mem | head -10</span></div>
+</div>
+
+<!-- ═══ KEYWORDS ═══ -->
+<div class="cutout" style="text-align:center;">
+  <h3>Keywords</h3>
+  <span class="kw">systemd</span>
+  <span class="kw-inv">ExecStart</span>
+  <span class="kw">Docker</span>
+  <span class="kw">devices</span>
+  <span class="kw-inv">modprobe</span>
+  <span class="kw">crontab</span>
+  <span class="kw">journalctl</span>
+  <span class="kw-inv">health check</span>
+  <span class="kw">V4L2</span>
+  <span class="kw">Yocto</span>
+  <span class="kw-inv">Bookworm</span>
+  <span class="kw">free -m</span>
+</div>
+
+<footer class="footer">
+  SPEC SUB-FILE · Deploy &amp; Ops · Arq. 6 Poster ·
+  Fuente: web-rtc-ext.md EXT-10B + PLAN_OASIS.md
+</footer>
+
+</body>
+</html>

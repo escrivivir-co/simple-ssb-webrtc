@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ARQ. 6 — SOFTWARE SPEC POSTER</title>
+<link rel="stylesheet" href="poster-template/fanzine.css">
+</head>
+<body>
+
+<!-- ════════════ HEADER ════════════ -->
+<header class="header">
+  <div class="stamp">SOLAR NET HUB</div>
+  <h1>Arq. 6</h1>
+  <div class="sub">µStreamer + Mumble + node-datachannel</div>
+  <div class="sub2">Software Specification — RPi 3B — Solo LAN, Cero JS</div>
+  <div class="issue">web-rtc-ext.md · EXT-10B · Camino E</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ════════════ SPEC INDEX ════════════ -->
+<div class="cutout" style="text-align:center;">
+  <h3>☞ Deep-Dive Specs (sub-ficheros)</h3>
+  <a class="deep-link" href="spec-arq6/ustreamer.html">µStreamer — CLI flags, encoders, V4L2 M2M, troubleshooting</a><br>
+  <a class="deep-link" href="spec-arq6/mumble-bridge.html">Mumble Bridge — audio pipeline, latencia, murmurd config</a><br>
+  <a class="deep-link" href="spec-arq6/oasis-proxy.html">Oasis Proxy — routes, templates, security headers, CSP</a><br>
+  <a class="deep-link" href="spec-arq6/datachannel.html">node-datachannel — API, signaling SDP/ICE via SSB, file transfer</a><br>
+  <a class="deep-link" href="spec-arq6/deploy.html">Deploy &amp; Ops — systemd, Docker, monitoring, checklist</a>
+</div>
+
+<!-- ════════════ STATS ════════════ -->
+<div class="stats-bar tilt-r">
+  <div class="stat"><span class="val">~10 MB</span><span class="lbl">RAM µStreamer</span></div>
+  <div class="stat"><span class="val">+0 MB</span><span class="lbl">Mumble (ya corre)</span></div>
+  <div class="stat"><span class="val">22 W</span><span class="lbl">Panel solar</span></div>
+  <div class="stat"><span class="val">1 GB</span><span class="lbl">LPDDR2 total</span></div>
+  <div class="stat"><span class="val">0</span><span class="lbl">JS en browser</span></div>
+</div>
+
+<!-- ════════════ DIAGRAM ════════════ -->
+<div class="cutout diagram-wrap">
+  <div class="tape tape-tl"></div>
+  <div class="tape tape-tr"></div>
+  <h2>☞ Esquema de Arquitectura</h2>
+<pre class="diagram">
+ ┌──────────────────────────────────────────────────────────────────┐
+ │              RASPBERRY PI 3B  ·  SOLAR NET HUB                  │
+ │              BCM2837 · Cortex-A53 · VideoCore IV                │
+ │                                                                  │
+ │  ┌──────────┐  V4L2   ┌─────────────────────┐                  │
+ │  │ 🎥 CAM   │────────▷│ µStreamer    :8080   │                  │
+ │  │ CSI/USB  │         │ ┌───────────────────┐│                  │
+ │  └──────────┘         │ │MJPEG (cero proxy) ││                  │
+ │                       │ │GET /stream        ││                  │
+ │                       │ │GET /snapshot       ││                  │
+ │                       │ └───────────────────┘│                  │
+ │                       └──────────┬──────────┘                   │
+ │                                  │ localhost                     │
+ │  ┌──────────┐  ALSA   ┌─────────┼──────────┐                   │
+ │  │ 🎤 MIC   │────────▷│ murmurd │  :64738  │                   │
+ │  └──────────┘         │ (Mumble,│ya activo) │                   │
+ │                       │ audio   │bidirecc.  │                   │
+ │                       └─────────┼──────────┘                    │
+ │                                 │ localhost                      │
+ │  ┌──────────────────────────────┴────────────────────────────┐  │
+ │  │  OASIS  :3000   (Node.js · SSB · cero JS en browser)     │  │
+ │  │                                                           │  │
+ │  │   GET /video  ──▷ proxy µStreamer MJPEG                   │  │
+ │  │   GET /audio  ──▷ bridge Mumble Opus→OGG (ffmpeg)        │  │
+ │  │                                                           │  │
+ │  │   HTML:  &lt;img src="/video"&gt;  +  &lt;audio src="/audio"&gt;     │  │
+ │  │                                                           │  │
+ │  │   ┌─────────────────────────────────────┐                 │  │
+ │  │   │ node-datachannel (P2P DataChannels) │                 │  │
+ │  │   │ texto · archivos · señalización     │                 │  │
+ │  │   └─────────────────────────────────────┘                 │  │
+ │  └───────────────────────────────────────────────────────────┘  │
+ └──────────────────────────────────────────────────────────────────┘
+          │                │                  │
+          ▼                ▼                  ▼
+   ┌────────────┐  ┌─────────────┐   ┌──────────────┐
+   │ 📺 BROWSER │  │ 🔊 MUMBLE  │   │ 📡 PEER P2P │
+   │ (SIN JS)   │  │ (cliente    │   │ node-data-   │
+   │ &lt;img&gt;MJPEG │  │  nativo)    │   │ channel      │
+   │ &lt;audio&gt;OGG │  │  RTT ~20ms  │   │ texto/files  │
+   └────────────┘  └─────────────┘   └──────────────┘
+</pre>
+</div>
+
+<!-- ════════════ CALLOUT ════════════ -->
+<div class="callout tilt-l">
+  el único servidor cuya salida directa es lo que oasis necesita
+</div>
+
+<!-- ════════════ TWO COLUMNS: COMPONENTS + TABLE ════════════ -->
+<div class="cols">
+
+  <!-- LEFT: Component cards -->
+  <div class="col">
+    <div class="cutout tilt-l">
+      <div class="tape tape-tr"></div>
+      <h3>Componentes</h3>
+
+      <div class="card">
+        <div class="card-title">µStreamer</div>
+        <div class="card-port">:8080</div>
+        <div class="card-body">
+          Lenguaje: <b>C</b> (95.8%) · pikvm/ustreamer<br>
+          Licencia: GPL-3.0 · PiKVM project<br>
+          RAM: <b>~5–15 MB</b><br>
+          Encode: JPEG vía V4L2 M2M (HW) o CPU<br>
+          Salida: MJPEG HTTP multipart<br>
+          Bonus: --drop-same-frames (ahorro BW)<br>
+          Install: <span class="hl-box">apt install ustreamer</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">murmurd (Mumble)</div>
+        <div class="card-port">:64738</div>
+        <div class="card-body">
+          Audio bidireccional · Opus codec<br>
+          Ya instalado y corriendo → <b>+0 MB</b><br>
+          Compatible Tor (TCP tunnel)<br>
+          Latencia: ~20 ms (cliente nativo)<br>
+          Bridge HTTP: ~200 ms (ffmpeg Opus→OGG)
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">node-datachannel</div>
+        <div class="card-port">P2P</div>
+        <div class="card-body">
+          DataChannels WebRTC sin media<br>
+          Texto, archivos, señalización<br>
+          Corre dentro de Oasis (Node.js)<br>
+          No transporta audio ni vídeo
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT: Checks table + When to use -->
+  <div class="col">
+    <div class="cutout tilt-r">
+      <div class="tape tape-tl"></div>
+      <h3>Ficha Rápida</h3>
+      <table class="tbl">
+        <tr><th>Propiedad</th><th>Estado</th></tr>
+        <tr><td>Cero JS en browser</td><td class="check">✔</td></tr>
+        <tr><td>Cámara CSI</td><td class="check">✔</td></tr>
+        <tr><td>Cámara USB</td><td class="check">✔</td></tr>
+        <tr><td>Audio bidireccional</td><td class="check">✔</td></tr>
+        <tr><td>Funciona sobre Tor</td><td class="check">✔</td></tr>
+        <tr><td>Escritura a microSD</td><td class="check">✘ (no)</td></tr>
+        <tr><td>HW JPEG encode (M2M)</td><td class="check">✔</td></tr>
+        <tr><td>HLS para remoto</td><td class="check">✘</td></tr>
+        <tr><td>WebRTC P2P (media)</td><td class="check">✘</td></tr>
+        <tr><td>DataChannels P2P (data)</td><td class="check">✔</td></tr>
+        <tr><td>RAM nuevos procesos</td><td class="check"><b>~10-20 MB</b></td></tr>
+      </table>
+    </div>
+
+    <div class="cutout tilt-l2" style="margin-top:12px;">
+      <h3>¿Cuándo Elegir Arq. 6?</h3>
+      <div style="font-size:0.7rem;">
+        <b>✔ SÍ cuando:</b><br>
+        · Solo operas en LAN (sin peers remotos)<br>
+        · Cada MB de RAM es crítico (1 GB compartido)<br>
+        · Quieres el pipeline más simple posible<br>
+        · Quieres HW JPEG encode (M2M) para CSI<br><br>
+        <b>✘ NO cuando:</b><br>
+        · Necesitas HLS o WebRTC para remoto<br>
+        → Usa <b>Arq. 3</b> (Mumble + go2rtc)<br>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════ SETUP ════════════ -->
+<div class="cutout tilt-r2">
+  <div class="tape tape-tl"></div>
+  <div class="tape tape-br"></div>
+  <h3>☞ Setup Técnico</h3>
+
+  <div style="font-size:0.72rem;font-weight:bold;margin-bottom:6px;">1. INSTALAR µSTREAMER</div>
+  <div class="cmd"><span class="prompt">sudo apt install ustreamer</span></div>
+
+  <div style="font-size:0.72rem;font-weight:bold;margin:10px 0 6px;">2. INICIAR µSTREAMER (según cámara)</div>
+  <div class="cmd"><span class="comment"># ── CSI (v3 cam, Bookworm) — HW encode JPEG vía M2M ──</span>
+<span class="prompt">sudo modprobe bcm2835-v4l2</span>
+<span class="prompt">libcamerify ustreamer \</span>
+    --host 127.0.0.1 \
+    --port 8080 \
+    --encoder=m2m-image \
+    --workers=3</div>
+
+  <div class="cmd"><span class="comment"># ── USB (webcam UVC) — CPU encode multihilo ──</span>
+<span class="prompt">ustreamer \</span>
+    --host 127.0.0.1 \
+    --port 8080 \
+    --device=/dev/video0 \
+    --workers=3 \
+    --drop-same-frames=20</div>
+
+  <div style="font-size:0.72rem;font-weight:bold;margin:10px 0 6px;">3. MUMBLE (ya corriendo)</div>
+  <div class="cmd"><span class="comment"># murmurd ya activo en :64738</span>
+<span class="comment"># bridge audio para &lt;audio&gt; en browser:</span>
+<span class="prompt">ffmpeg -i mumble://localhost:64738 \</span>
+    -c:a libvorbis -f ogg pipe:1 | \
+    node oasis-audio-bridge.js</div>
+
+  <div style="font-size:0.72rem;font-weight:bold;margin:10px 0 6px;">4. HTML EN OASIS (cero JS)</div>
+  <div class="cmd"><span class="comment">&lt;!-- webrtc_view: lo que ve el browser --&gt;</span>
+&lt;img src="/video" alt="stream"&gt;
+&lt;audio src="/audio" controls autoplay&gt;&lt;/audio&gt;</div>
+
+  <div style="font-size:0.72rem;font-weight:bold;margin:10px 0 6px;">5. PROXY EN OASIS (Node.js)</div>
+  <div class="cmd"><span class="comment">// routes — proxy µStreamer MJPEG</span>
+app.get('/video', (req, res) =&gt; {
+  const upstream = http.get(
+    'http://127.0.0.1:8080/stream',
+    (mjpeg) =&gt; {
+      res.writeHead(200, mjpeg.headers);
+      mjpeg.pipe(res);
+    }
+  );
+  req.on('close', () =&gt; upstream.destroy());
+});</div>
+</div>
+
+<div class="washi"></div>
+
+<!-- ════════════ COMPARISON ════════════ -->
+<div class="cutout tilt-l">
+  <h3>Arq. 6 vs Arq. 3 — ¿Por Qué Arq. 6 Gana Aquí?</h3>
+  <table class="tbl">
+    <tr>
+      <th></th>
+      <th>Arq. 3 (go2rtc + Mumble)</th>
+      <th>Arq. 6 (µStreamer + Mumble)</th>
+    </tr>
+    <tr>
+      <td><b>RAM nuevos</b></td>
+      <td>~20 MB (go2rtc)</td>
+      <td><b>~10 MB (µStreamer) ★</b></td>
+    </tr>
+    <tr>
+      <td><b>Formatos vídeo</b></td>
+      <td>MJPEG, HLS, RTSP, WebRTC</td>
+      <td>MJPEG solamente</td>
+    </tr>
+    <tr>
+      <td><b>Audio</b></td>
+      <td>Igual (Mumble)</td>
+      <td>Igual (Mumble)</td>
+    </tr>
+    <tr>
+      <td><b>HW JPEG encode</b></td>
+      <td>✘ (go2rtc no usa M2M)</td>
+      <td><b>✔ (V4L2 M2M nativo) ★</b></td>
+    </tr>
+    <tr>
+      <td><b>CPU vídeo CSI @ 720p</b></td>
+      <td>~5–10%</td>
+      <td><b>~3–8% (M2M HW) ★</b></td>
+    </tr>
+    <tr>
+      <td><b>HLS para remoto</b></td>
+      <td>✔</td>
+      <td>✘ — solo LAN</td>
+    </tr>
+    <tr>
+      <td><b>Paquete Debian</b></td>
+      <td>✘ (binario manual)</td>
+      <td><b>✔ apt install ★</b></td>
+    </tr>
+  </table>
+  <div style="font-size:0.65rem;margin-top:6px;opacity:0.6;">
+    ★ = ventaja de Arq. 6.  Si necesitas HLS/remoto → go2rtc (Arq. 3) sigue siendo 1ª opción general.
+  </div>
+</div>
+
+<!-- ════════════ FOOTER ════════════ -->
+<footer class="footer">
+  RPi 3B · Yocto Poky 4.3.4 → Docker → Debian Bookworm ·
+  µStreamer v6.55 · Mumble :64738 · Oasis :3000 ·
+  Solar 22W · 1 GB LPDDR2 · VideoCore IV ·
+  Generado desde web-rtc-ext.md EXT-9 / EXT-10B
+</footer>
+
+</body>
+</html>

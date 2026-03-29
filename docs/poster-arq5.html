@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ARQ. 5 — SOFTWARE SPEC POSTER</title>
+<link rel="stylesheet" href="poster-template/fanzine.css">
+</head>
+<body>
+
+<!-- ════════════ HEADER ════════════ -->
+<header class="header">
+  <div class="stamp">SOLAR NET HUB</div>
+  <h1>Arq. 5</h1>
+  <div class="sub">RPi-WebRTC + node-datachannel + proxy HTTP</div>
+  <div class="sub2">Software Specification — RPi 3B — Solo CSI, WebRTC Nativo, P2P Real</div>
+  <div class="issue">web-rtc-ext.md · EXT-3 / EXT-5D / EXT-6 Camino D</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ════════════ SPEC INDEX ════════════ -->
+<div class="cutout" style="text-align:center;">
+  <h3>☞ Deep-Dive Specs</h3>
+  <a class="deep-link" href="spec-arq5/rpi-webrtc.html">RPi-WebRTC — compilación, config, MMAL/libcamera, señalización</a><br>
+  <a class="deep-link" href="spec-arq5/media-proxy.html">Media Proxy — consumer WebRTC→MJPEG/OGG, rutas Oasis</a><br>
+  <a class="deep-link" href="spec-arq5/deploy.html">Deploy &amp; Ops — cross-compile, systemd, riesgos, fallback</a>
+</div>
+
+<!-- ════════════ STATS ════════════ -->
+<div class="stats-bar tilt-r">
+  <div class="stat"><span class="val">~40 MB</span><span class="lbl">RAM RPi-WebRTC</span></div>
+  <div class="stat"><span class="val">~40–60 MB</span><span class="lbl">Proxy + ffmpeg</span></div>
+  <div class="stat"><span class="val">~80–100 MB</span><span class="lbl">Total stack</span></div>
+  <div class="stat"><span class="val">⚠️ Solo CSI</span><span class="lbl">No USB</span></div>
+  <div class="stat"><span class="val">0</span><span class="lbl">JS en browser SNH</span></div>
+</div>
+
+<!-- ════════════ DIAGRAM ════════════ -->
+<div class="cutout diagram-wrap">
+  <div class="tape tape-tl"></div>
+  <div class="tape tape-tr"></div>
+  <h2>☞ Esquema de Arquitectura</h2>
+<pre class="diagram">
+ ┌──────────────────────────────────────────────────────────────────┐
+ │              RASPBERRY PI 3B  ·  SOLAR NET HUB                  │
+ │              BCM2837 · Cortex-A53 · VideoCore IV                │
+ │                                                                  │
+ │  ┌──────────┐  MMAL/   ┌─────────────────────────┐              │
+ │  │ 🎥 CAM   │─libcam──▷│ RPi-WebRTC     :8889    │              │
+ │  │ CSI ONLY │ zero-copy│ ┌───────────────────────┐│              │
+ │  └──────────┘          │ │H.264 HW encode (VC IV)││              │
+ │                        │ │Opus audio (ALSA)      ││              │
+ │  ┌──────────┐  ALSA    │ │ICE + DTLS-SRTP        ││              │
+ │  │ 🎤 MIC   │────────▷│ │DataChannel (SCTP)     ││              │
+ │  └──────────┘          │ │Señalización HTTP+WS   ││              │
+ │                        │ └───────────────────────┘│              │
+ │                        └──────────┬──────────────┘               │
+ │                                   │ WebRTC (localhost)           │
+ │  ┌────────────────────────────────┴──────────────────────────┐   │
+ │  │  OASIS  :3000   (Node.js · SSB · cero JS en browser)     │   │
+ │  │                                                           │   │
+ │  │  ┌─────────────────────────────────────────────────────┐  │   │
+ │  │  │ WebRTC Consumer (node-datachannel)                  │  │   │
+ │  │  │ Conecta como peer a RPi-WebRTC (localhost)          │  │   │
+ │  │  │ Recibe H.264 RTP → ffmpeg decode → MJPEG            │  │   │
+ │  │  │ Recibe Opus RTP  → ffmpeg decode → OGG/WAV          │  │   │
+ │  │  └────────────┬──────────────────┬─────────────────────┘  │   │
+ │  │               │                  │                        │   │
+ │  │  GET /video → MJPEG stream  GET /audio → OGG stream      │   │
+ │  │                                                           │   │
+ │  │  webrtc_view → &lt;img src="/video"&gt; + &lt;audio src="/audio"&gt; │   │
+ │  │                                                           │   │
+ │  │  ┌─────────────────────────────────────┐                  │   │
+ │  │  │ node-datachannel (P2P DataChannels) │                  │   │
+ │  │  │ texto · archivos · señalización SSB │                  │   │
+ │  │  └─────────────────────────────────────┘                  │   │
+ │  └───────────────────────────────────────────────────────────┘   │
+ └──────────────────────────────────────────────────────────────────┘
+          │                │                │
+          ▼                ▼                ▼
+   ┌────────────┐  ┌─────────────┐  ┌─────────────┐
+   │ 📺 BROWSER │  │ 📡 PEER     │  │ 🔊 BROWSER  │
+   │ LAN (no JS)│  │ REMOTO      │  │ REMOTO      │
+   │ &lt;img&gt;MJPEG │  │ WebRTC P2P  │  │ WebRTC P2P  │
+   │ &lt;audio&gt;OGG │  │ nativo !!   │  │ video+audio │
+   │ vía proxy  │  │ ICE+DTLS    │  │ ~100ms lat. │
+   └────────────┘  └─────────────┘  └─────────────┘
+</pre>
+</div>
+
+<!-- ════════════ CALLOUT ════════════ -->
+<div class="callout tilt-l">
+  ★ WebRTC nativo en el Pi: H.264 HW zero-copy, sin ffmpeg en captura, P2P real con browsers remotos — pero solo CSI ★
+</div>
+
+<!-- ════════════ KEY CONCEPTS ════════════ -->
+<div class="cutout">
+  <h3>Key Concepts</h3>
+
+  <details>
+    <summary>¿Qué es RPi-WebRTC?</summary>
+    <div class="detail-body">
+      <div class="key-concept"><b>rpi-webrtc-streamer</b> (kclyu) es un servidor WebRTC nativo en C++ compilado contra las APIs de la GPU del RPi. Accede al encoder H.264 HW <b>directamente vía MMAL/libcamera</b>, sin pasar por ffmpeg ni V4L2. Diferencia clave vs go2rtc/MediaMTX: estos son genéricos; RPi-WebRTC es <b>exclusivo para RPi</b>.</div>
+    </div>
+  </details>
+
+  <details>
+    <summary>¿Por qué un proxy para el browser local?</summary>
+    <div class="detail-body">
+      <div class="key-concept">RPi-WebRTC sirve WebRTC nativo → requiere <b>JavaScript</b> en el browser (<code>RTCPeerConnection</code>, <code>setRemoteDescription</code>). Esto <b>viola la restricción de Oasis</b> (cero JS en cliente). El proxy Node.js consume WebRTC en localhost y re-sirve como MJPEG/OGG puro (HTML <code>&lt;img&gt;</code> / <code>&lt;audio&gt;</code>).</div>
+      <div class="warn">El peer <b>remoto</b> (no el browser del SNH) SÍ puede usar WebRTC nativo con JS — RPi-WebRTC habla directo con Chrome/Firefox remotos.</div>
+    </div>
+  </details>
+
+  <details>
+    <summary>¿Por qué solo CSI?</summary>
+    <div class="detail-body">
+      <div class="key-concept">RPi-WebRTC se compila contra <b>MMAL</b> (legacy) o <b>libcamera</b> para acceder al encoder H.264 del VideoCore IV/VI. Estas APIs solo exponen cámaras CSI-2. Las cámaras USB (UVC/V4L2) no son compatibles con este path de captura.</div>
+      <div class="warn">Si necesitas cámara USB → esta arquitectura está <b>descartada</b>. Usar <a href="poster-arq3.html">Arq. 3</a> o <a href="poster-arq6.html">Arq. 6</a>.</div>
+    </div>
+  </details>
+
+  <details>
+    <summary>La gran ventaja: P2P WebRTC real</summary>
+    <div class="detail-body">
+      <div class="key-concept">RPi-WebRTC es la <b>única arquitectura</b> que ofrece WebRTC P2P nativo con browsers remotos: video H.264 HW + audio Opus + DataChannels, con latencia <b>~100 ms</b>, sin go2rtc ni MediaMTX intermedios. ICE completo (host/srflx/relay).</div>
+      <div class="tip">Arq. 3 y 6 usan MJPEG/HLS — no son P2P WebRTC real. Arq. 5 sí lo es.</div>
+    </div>
+  </details>
+
+  <details>
+    <summary>Estado del proyecto: mantenimiento irregular</summary>
+    <div class="detail-body">
+      <div class="warn">Último commit significativo: <b>2023</b>. Fork community activo pero sin garantía. Si deja de compilar en aarch64 con kernels nuevos, se necesita mantener el fork. <b>Mitigación</b>: fallback a <a href="poster-arq3.html">Arq. 3</a> (go2rtc genérico).</div>
+    </div>
+  </details>
+</div>
+
+<!-- ════════════ TWO COLUMNS ════════════ -->
+<div class="cols">
+
+  <div class="col">
+    <div class="cutout tilt-l">
+      <div class="tape tape-tr"></div>
+      <h3>Componentes</h3>
+
+      <div class="card">
+        <div class="card-title">RPi-WebRTC Streamer</div>
+        <div class="card-port">:8889</div>
+        <div class="card-body">
+          Lenguaje: <b>C++</b> (basado en libwebrtc / Chromium)<br>
+          Repo: kclyu/rpi-webrtc-streamer<br>
+          Licencia: BSD<br>
+          RAM: <b>~30–50 MB</b><br>
+          Binario: ~25–40 MB (cross-compile x86→ARM)<br>
+          Captura: MMAL/libcamera (solo CSI, zero-copy)<br>
+          Encode: H.264 HW VideoCore IV, sin ffmpeg<br>
+          Audio: ALSA → Opus (libwebrtc AudioEncoder)<br>
+          Transporte: SRTP sobre DTLS, ICE completo<br>
+          Señalización: HTTP + WebSocket embebidos<br>
+          DataChannel: ✔ (SCTP sobre DTLS)
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Media Proxy (Node.js)</div>
+        <div class="card-port">dentro de Oasis</div>
+        <div class="card-body">
+          <b>~200 líneas</b> · <span class="hl-box">media_proxy.js</span><br>
+          Se conecta como peer WebRTC a RPi-WebRTC (localhost)<br>
+          Usa <b>node-datachannel</b> como consumer<br>
+          Decode: H.264→MJPEG (ffmpeg pipe)<br>
+          Decode: Opus→OGG (ffmpeg pipe)<br>
+          Sirve: GET /video, GET /audio
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">node-datachannel</div>
+        <div class="card-port">P2P</div>
+        <div class="card-body">
+          DataChannels WebRTC: texto, archivos<br>
+          Señalización SDP/ICE vía SSB<br>
+          También actúa como consumer en el proxy<br>
+          Corre dentro de Oasis (Node.js)
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="cutout tilt-r">
+      <div class="tape tape-tl"></div>
+      <h3>Ficha Rápida</h3>
+      <table class="tbl">
+        <tr><th>Propiedad</th><th>Estado</th></tr>
+        <tr><td>Cero JS en browser SNH</td><td class="check">✔ (vía proxy)</td></tr>
+        <tr><td>Cámara CSI</td><td class="check"><b>✔</b> (zero-copy HW)</td></tr>
+        <tr><td>Cámara USB</td><td class="check"><b>✘ No soportada</b></td></tr>
+        <tr><td>Audio</td><td class="check">Opus (ALSA→libwebrtc)</td></tr>
+        <tr><td>Audio bidireccional</td><td class="check">⚠️ Solo vía DataChannel</td></tr>
+        <tr><td>Funciona sobre Tor</td><td class="check">⚠️ Necesita TURN</td></tr>
+        <tr><td>MJPEG streaming</td><td class="check">✔ (vía proxy)</td></tr>
+        <tr><td>HLS para remoto</td><td class="check">✘ No nativo</td></tr>
+        <tr><td>WebRTC P2P (media)</td><td class="check"><b>✔ Nativo !!</b></td></tr>
+        <tr><td>DataChannels P2P (data)</td><td class="check">✔</td></tr>
+        <tr><td>RAM nuevos procesos</td><td class="check"><b>~80–100 MB</b></td></tr>
+        <tr><td>CPU vídeo (CSI)</td><td class="check">~15–20%</td></tr>
+      </table>
+    </div>
+
+    <div class="cutout tilt-l2" style="margin-top:12px;">
+      <h3>¿Cuándo Elegir Arq. 5?</h3>
+      <div style="font-size:0.7rem;">
+        <b>✔ SÍ cuando:</b><br>
+        · Usas <b>solo cámara CSI</b> (requisito hard)<br>
+        · Necesitas <b>WebRTC P2P nativo</b> con peer remoto<br>
+        · Quieres latencia <b>&lt;100 ms</b> sin intermediarios<br>
+        · Aceptas compilar/mantener RPi-WebRTC<br>
+        · El peer remoto <b>no pasa por Tor</b><br><br>
+        <b>✘ NO cuando:</b><br>
+        · Usas o podrías usar <b>cámara USB</b><br>
+        → Usa <a href="poster-arq3.html">Arq. 3</a> o <a href="poster-arq6.html">Arq. 6</a><br>
+        · Necesitas <b>funcionar sobre Tor</b><br>
+        → Usa <a href="poster-arq3.html">Arq. 3</a> (Mumble TCP tunnel)<br>
+        · Prefieres <b>componentes bien mantenidos</b><br>
+        → RPi-WebRTC tiene mantenimiento irregular<br>
+        · <b>RAM</b> es crítica (~80–100 MB es mucho para 1 GB)<br>
+        → Usa <a href="poster-arq6.html">Arq. 6</a> (~10–20 MB)
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════ FICHA TÉCNICA ════════════ -->
+<div class="cutout">
+  <div class="tape tape-tl"></div>
+  <h3>☞ Ficha Técnica: RPi-WebRTC Streamer</h3>
+  <table class="tbl">
+    <tr><th>Campo</th><th>Valor</th></tr>
+    <tr><td><b>Lenguaje</b></td><td>C++ (basado en libwebrtc de Google, parcheado para RPi)</td></tr>
+    <tr><td><b>Repo</b></td><td>github.com/kclyu/rpi-webrtc-streamer</td></tr>
+    <tr><td><b>Licencia</b></td><td>BSD (derivado de libwebrtc / Chromium)</td></tr>
+    <tr><td><b>Arquitectura</b></td><td>WebRTC nativo completo: señalización + ICE + DTLS-SRTP + H.264 HW</td></tr>
+    <tr><td><b>Captura</b></td><td>MMAL (legacy) / libcamera (moderno). Solo cámaras CSI</td></tr>
+    <tr><td><b>Encode</b></td><td>H.264 HW del VideoCore IV/VI, zero-copy. Sin ffmpeg</td></tr>
+    <tr><td><b>Transporte</b></td><td>SRTP sobre DTLS, ICE completo (host / srflx / relay)</td></tr>
+    <tr><td><b>Señalización</b></td><td>HTTP + WebSocket embebidos. Compatible AppRTC signaling</td></tr>
+    <tr><td><b>Audio</b></td><td>ALSA capture → Opus encode (libwebrtc AudioEncoder)</td></tr>
+    <tr><td><b>DataChannel</b></td><td>✔ SCTP sobre DTLS (igual que browsers)</td></tr>
+    <tr><td><b>RAM típica</b></td><td>~30–50 MB (libwebrtc pesada, pero encode es HW)</td></tr>
+    <tr><td><b>CPU RPi 3B</b></td><td>~10–15% (encode HW) + ~5% (ICE/DTLS/SRTP) = ~15–20% total</td></tr>
+    <tr><td><b>Binario</b></td><td>~25–40 MB (libwebrtc compilada estáticamente). Cross-compile x86→ARM</td></tr>
+    <tr><td><b>Estado</b></td><td>⚠️ Mantenimiento irregular. Último commit significativo: 2023. Fork community activo</td></tr>
+    <tr><td><b>USB</b></td><td>❌ No soportadas. Requiere MMAL/libcamera (solo CSI)</td></tr>
+  </table>
+</div>
+
+<!-- ════════════ COMPARATIVA ════════════ -->
+<div class="cutout tilt-r">
+  <div class="tape tape-tl"></div>
+  <h3>RPi-WebRTC vs. Otros Servidores Media</h3>
+  <table class="tbl" style="font-size:0.55rem;">
+    <tr><th>Criterio</th><th>RPi-WebRTC</th><th>go2rtc</th><th>MediaMTX</th><th>µStreamer</th></tr>
+    <tr>
+      <td><b>Protocolo salida</b></td>
+      <td>WebRTC nativo (SRTP)</td>
+      <td>MJPEG, HLS, WebRTC, RTSP</td>
+      <td>RTSP, HLS, WebRTC, MJPEG</td>
+      <td>MJPEG, JPEG</td>
+    </tr>
+    <tr>
+      <td><b>Cam CSI</b></td>
+      <td>✔ MMAL/libcamera, zero-copy</td>
+      <td>✔ vía V4L2 (con copia)</td>
+      <td>✔ rpicam nativo (zero-copy)</td>
+      <td>✔ V4L2 M2M HW</td>
+    </tr>
+    <tr>
+      <td><b>Cam USB</b></td>
+      <td><b>✘ No</b></td>
+      <td>✔ V4L2 directo</td>
+      <td>✔ V4L2 directo</td>
+      <td>✔ V4L2 directo</td>
+    </tr>
+    <tr>
+      <td><b>Encode H.264 HW</b></td>
+      <td>✔ Nativo, sin ffmpeg</td>
+      <td>⚠️ Solo si fuente ya es H.264</td>
+      <td>✔ rpicam nativo (CSI)</td>
+      <td>✘ Solo MJPEG</td>
+    </tr>
+    <tr>
+      <td><b>Browser sin JS</b></td>
+      <td><b>✘ Requiere JS</b> (WebRTC API)</td>
+      <td>✔ MJPEG/HLS</td>
+      <td>✔ MJPEG/HLS</td>
+      <td>✔ MJPEG puro</td>
+    </tr>
+    <tr>
+      <td><b>Tor</b></td>
+      <td>✘ WebRTC+ICE incompatible</td>
+      <td>⚠️ MJPEG/HLS sí</td>
+      <td>⚠️ MJPEG/HLS sí</td>
+      <td>✔ HTTP puro</td>
+    </tr>
+    <tr>
+      <td><b>Señalización</b></td>
+      <td>✔ HTTP+WS embebidos</td>
+      <td>✔ API HTTP</td>
+      <td>✔ Hooks HTTP</td>
+      <td>✘ No tiene</td>
+    </tr>
+    <tr>
+      <td><b>RAM</b></td>
+      <td>~30–50 MB</td>
+      <td>~20–40 MB</td>
+      <td>~15–30 MB</td>
+      <td>~5–15 MB</td>
+    </tr>
+    <tr>
+      <td><b>Compilación</b></td>
+      <td><b>Alta</b> (libwebrtc, ~4 GB build)</td>
+      <td>Baja (binario Go)</td>
+      <td>Baja (binario Go)</td>
+      <td>Baja (C, apt/make)</td>
+    </tr>
+    <tr>
+      <td><b>Madurez</b></td>
+      <td>⚠️ Irregular desde 2023</td>
+      <td>✔ Activo (7k ★)</td>
+      <td>✔ Activo (13k ★)</td>
+      <td>✔ Activo (pikvm)</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ════════════ COMPOSABLE PATTERN ════════════ -->
+<div class="cutout">
+  <div class="tape tape-tr"></div>
+  <h3>Patrón Composable: RPi-WebRTC como fuente para go2rtc</h3>
+<pre class="diagram" style="font-size:0.55rem;">
+  ┌──────────────────────────────────────────────────────────────────┐
+  │                    Raspberry Pi 3B (Solar Net Hub)               │
+  │                                                                  │
+  │  ┌──────────┐  MMAL   ┌───────────────┐  WebRTC   ┌─────────┐  │
+  │  │ 🎥 CSI   │────────▷│ RPi-WebRTC    │──(WHEP)──▷│ go2rtc  │  │
+  │  └──────────┘         │ H.264 HW      │           │ :1984   │  │
+  │                       │ zero-copy      │           │         │  │
+  │  ┌──────────┐  ALSA   │ + Opus audio  │           │ MJPEG   │  │
+  │  │ 🎤 Mic   │────────▷│ :8889         │           │ HLS     │  │
+  │  └──────────┘         └───────────────┘           │ JPEG    │  │
+  │                                                   └────┬────┘  │
+  │                                                        │       │
+  │  ┌─────────────────────────────────────────────────────┤       │
+  │  │ Node.js (Oasis :3000)                               │       │
+  │  │ Sirve HTML con &lt;img&gt;/&lt;video&gt; apuntando a go2rtc     │       │
+  │  └─────────────────────────────────────────────────────┘       │
+  └────────────────────────────────────────────────────────────────┘
+</pre>
+  <div class="tip"><b>Ventaja</b>: encode H.264 HW zero-copy (RPi-WebRTC) + re-serve sin re-encode como MJPEG/HLS (go2rtc). Lo mejor de ambos mundos.</div>
+  <div class="warn"><b>Desventaja</b>: dos procesos media (~30 MB + ~20 MB = ~50 MB) vs solo go2rtc (~20–40 MB) directo de V4L2. El beneficio de CPU puede no compensar el coste de RAM en 1 GB.</div>
+</div>
+
+<!-- ════════════ IMPLEMENTATION: CAMINO D ════════════ -->
+<div class="cutout tilt-l">
+  <div class="tape tape-tl"></div>
+  <h3>☞ Camino D: Implementación</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Fase</th><th>Alcance</th><th>Ficheros / componentes</th></tr>
+    <tr>
+      <td><b>0. Detección HW</b></td>
+      <td>Verificar CSI presente. Abortar si solo USB</td>
+      <td><span class="hl-box">hardware_detect.js</span></td>
+    </tr>
+    <tr>
+      <td><b>1. DataChannel</b></td>
+      <td>Idéntico al Camino A (P2P datos)</td>
+      <td>webrtc_model.js, webrtc_view.js, backend.js</td>
+    </tr>
+    <tr>
+      <td><b>2. Señalización SSB</b></td>
+      <td>Idéntico al Camino A</td>
+      <td>signaling/ssb.js, signaling/index.js</td>
+    </tr>
+    <tr>
+      <td><b>3. Captura + encode</b></td>
+      <td>RPi-WebRTC: CSI + H.264 HW + Opus. Server en :8889</td>
+      <td>rpi-webrtc-streamer (binario C++, ARM64)</td>
+    </tr>
+    <tr>
+      <td><b>3b. Proxy WebRTC→HTTP</b></td>
+      <td>Node.js peer local → decode → MJPEG/OGG</td>
+      <td><span class="hl-box">media_proxy.js</span> (~200 lín, usa node-datachannel)</td>
+    </tr>
+    <tr>
+      <td><b>4. File transfer</b></td>
+      <td>Idéntico al Camino A</td>
+      <td>Extensión de webrtc_model.js</td>
+    </tr>
+  </table>
+
+<pre class="diagram" style="font-size:0.52rem;">
+  webrtc_view.js ─── renderiza HTML con &lt;img&gt;/&lt;video&gt;/&lt;audio&gt; sin JS
+       │
+  backend.js ────── rutas GET/POST /webrtc/*
+       │
+  webrtc_model.js ── estado + node-datachannel (DataChannel para datos)
+       │
+  media_proxy.js ─── consume WebRTC de RPi-WebRTC (localhost:8889)
+       │                └─ decode H.264→MJPEG (ffmpeg)
+       │                └─ decode Opus→OGG (ffmpeg)
+       │                └─ sirve GET /video, GET /audio
+       │
+  RPi-WebRTC ─────── binario C++: CSI → H.264 HW → WebRTC server (:8889)
+       │
+  signaling/ ────── abstracción: manual | ssb | ssb-lan
+</pre>
+</div>
+
+<!-- ════════════ RISK TABLE ════════════ -->
+<div class="cutout tilt-r2">
+  <div class="tape tape-tr"></div>
+  <h3>Riesgos &amp; Mitigaciones</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Riesgo</th><th>Probabilidad</th><th>Impacto</th><th>Mitigación</th></tr>
+    <tr>
+      <td>RPi-WebRTC deja de compilar en kernels nuevos</td>
+      <td>Media-Alta</td>
+      <td>Bloqueante</td>
+      <td>Mantener fork o fallback a <a href="poster-arq3.html">Arq. 3</a> (go2rtc)</td>
+    </tr>
+    <tr>
+      <td>libwebrtc ~4 GB build time</td>
+      <td>Segura</td>
+      <td>DX</td>
+      <td>Cross-compile x86→ARM. Pre-build binario. CI/CD</td>
+    </tr>
+    <tr>
+      <td>Cámara USB en el futuro</td>
+      <td>Media</td>
+      <td>Bloqueante</td>
+      <td>hardware_detect.js → cambio automático a Arq. 3</td>
+    </tr>
+    <tr>
+      <td>RAM ~80–100 MB en device de 1 GB</td>
+      <td>Segura</td>
+      <td>Alto</td>
+      <td>Monitorizar con cgroups. Fallback a Arq. 6 (~10–20 MB)</td>
+    </tr>
+    <tr>
+      <td>Tor incompatible con WebRTC/ICE</td>
+      <td>Segura</td>
+      <td>Medio</td>
+      <td>Para Tor: proxy MJPEG/HLS sin WebRTC, o usar Arq. 3 (Mumble)</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ════════════ KEYWORDS ════════════ -->
+<div class="cutout" style="text-align:center;">
+  <span class="kw">RPi-WebRTC</span>
+  <span class="kw-inv">MMAL</span>
+  <span class="kw">libcamera</span>
+  <span class="kw-inv">H.264 HW</span>
+  <span class="kw">zero-copy</span>
+  <span class="kw-inv">libwebrtc</span>
+  <span class="kw">SRTP</span>
+  <span class="kw-inv">ICE</span>
+  <span class="kw">DTLS</span>
+  <span class="kw-inv">media_proxy.js</span>
+  <span class="kw">SCTP</span>
+  <span class="kw-inv">Solo CSI</span>
+</div>
+
+<footer class="footer">
+  Arq. 5 · RPi-WebRTC + node-datachannel + proxy HTTP · SSB-WebRTC · Solar Net Hub ·
+  Fuente: web-rtc-ext.md EXT-3 / EXT-5D / EXT-6 Camino D
+</footer>
+
+</body>
+</html>

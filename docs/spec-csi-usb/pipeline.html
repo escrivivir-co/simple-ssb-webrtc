@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SPEC · Pipeline &amp; Comandos — CSI vs USB</title>
+<link rel="stylesheet" href="../poster-template/fanzine.css">
+</head>
+<body>
+
+<div class="nav-back">
+  <a href="../poster-csi-usb.html">◀ VOLVER AL POSTER</a> · SPEC · Pipeline &amp; Comandos
+</div>
+
+<header class="header" style="padding:18px 10px 14px;">
+  <div class="stamp">ffmpeg</div>
+  <h1 style="font-size:1.8rem;">Pipeline &amp; Comandos</h1>
+  <div class="sub">Captura y encode según tipo de cámara — CSI, USB, USB-H.264</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ═══ PIPELINE TABLE ═══ -->
+<div class="cutout">
+  <h3>Pipeline de Transmisión por Pista (CSI/USB-aware)</h3>
+  <div class="key-concept" style="margin-bottom:8px;">
+    Sustituye la tabla original de web-rtc.md §1.7 que asumía solo CSI.
+  </div>
+  <table class="tbl" style="font-size:0.58rem;">
+    <tr><th>Pista</th><th>Origen CSI</th><th>Origen USB</th><th>Codec</th><th>CPU</th></tr>
+    <tr>
+      <td><b>Vídeo</b></td>
+      <td>rpicam-vid --codec h264 --inline -o - (zero-copy)</td>
+      <td>ffmpeg -f v4l2 -input_format mjpeg + re-encode h264_v4l2m2m</td>
+      <td>H.264 HW</td>
+      <td>CSI ~5% · USB ~15%</td>
+    </tr>
+    <tr>
+      <td><b>Vídeo (USB H.264 HW)</b></td>
+      <td>N/A</td>
+      <td>ffmpeg -f v4l2 -input_format h264 -c:v copy (passthrough)</td>
+      <td>H.264 pass</td>
+      <td>~3%</td>
+    </tr>
+    <tr>
+      <td><b>Audio</b></td>
+      <td colspan="2" style="text-align:center;">ffmpeg -f alsa -i default · o Mumble (§2.2 Arq. 3)</td>
+      <td>Opus 48 kHz</td>
+      <td>~2%</td>
+    </tr>
+    <tr>
+      <td><b>Datos</b></td>
+      <td colspan="2" style="text-align:center;">Independiente de cámara</td>
+      <td>SCTP</td>
+      <td>—</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ═══ FFMPEG COMMANDS ═══ -->
+<div class="cutout tilt-r">
+  <div class="tape tape-tl"></div>
+  <h3>Comandos ffmpeg por Tipo de Cámara</h3>
+
+  <div style="font-size:0.65rem;font-weight:bold;margin-bottom:4px;">═══ CSI: H.264 HW directo ═══</div>
+  <div class="cmd" style="font-size:0.58rem;"><span class="comment"># Opción 1: rpicam-vid (recomendado, zero-copy)</span>
+<span class="prompt">rpicam-vid -t 0 --width 1280 --height 720 --framerate 25 \</span>
+  --codec h264 --profile baseline --level 3.1 \
+  --inline --listen -o tcp://127.0.0.1:8888</div>
+
+  <div class="cmd" style="font-size:0.58rem;margin-top:6px;"><span class="comment"># Opción 2: ffmpeg vía V4L2 (si rpicam-vid no disponible)</span>
+<span class="prompt">ffmpeg -f v4l2 -input_format h264 -video_size 1280x720 \</span>
+  -framerate 25 -i /dev/video0 -c:v copy \
+  -f rtp rtp://127.0.0.1:5004</div>
+
+  <div style="font-size:0.65rem;font-weight:bold;margin:12px 0 4px;">═══ USB: MJPEG → re-encode H.264 HW ═══</div>
+  <div class="cmd" style="font-size:0.58rem;"><span class="comment"># La mayoría de webcams USB entregan MJPEG por V4L2</span>
+<span class="prompt">ffmpeg -f v4l2 -input_format mjpeg -video_size 1280x720 \</span>
+  -framerate 25 -i /dev/video0 \
+  -c:v h264_v4l2m2m -b:v 1M -pix_fmt yuv420p \
+  -f rtp rtp://127.0.0.1:5004</div>
+
+  <div style="font-size:0.65rem;font-weight:bold;margin:12px 0 4px;">═══ USB con H.264 HW integrado: passthrough ═══</div>
+  <div class="cmd" style="font-size:0.58rem;"><span class="comment"># Webcams tipo Logitech C920 que entregan H.264 directo</span>
+<span class="prompt">ffmpeg -f v4l2 -input_format h264 -video_size 1280x720 \</span>
+  -framerate 25 -i /dev/video0 -c:v copy \
+  -f rtp rtp://127.0.0.1:5004</div>
+</div>
+
+<!-- ═══ DELIVERY IMPACT ═══ -->
+<div class="cutout">
+  <div class="tape tape-tr"></div>
+  <h3>Impacto en §2.1 — Formato de Entrega al Navegador</h3>
+  <div class="key-concept" style="margin-bottom:8px;">
+    El formato al navegador (MJPEG, HLS) es el mismo con CSI o USB. Lo que cambia es el pipeline servidor.
+  </div>
+  <table class="tbl" style="font-size:0.58rem;">
+    <tr><th>Formato entrega</th><th>Pipeline CSI</th><th>Pipeline USB</th><th>Δ CPU</th></tr>
+    <tr>
+      <td><b>MJPEG &lt;img&gt;</b></td>
+      <td>rpicam-vid --codec mjpeg → HTTP</td>
+      <td>ffmpeg -f v4l2 -input_format mjpeg -c:v copy → HTTP</td>
+      <td>~0% (ambos nativos)</td>
+    </tr>
+    <tr>
+      <td><b>HLS &lt;video&gt;</b></td>
+      <td>rpicam-vid --codec h264 → ffmpeg -f hls</td>
+      <td>ffmpeg -f v4l2 mjpeg → h264_v4l2m2m → -f hls</td>
+      <td>CSI ~5% · USB ~15%</td>
+    </tr>
+    <tr>
+      <td><b>HLS (USB H.264 HW)</b></td>
+      <td>N/A</td>
+      <td>ffmpeg -f v4l2 h264 → -c:v copy -f hls</td>
+      <td>~3%</td>
+    </tr>
+  </table>
+  <div class="warn" style="margin-top:6px;">Para <b>Fase 3 (Internet)</b> con HLS, CSI ahorra ~10% CPU vs. USB. En un dispositivo solar de 22W, esos ciclos de CPU se traducen en vatios.</div>
+</div>
+
+<!-- ═══ AUTODETECTION ═══ -->
+<div class="cutout tilt-l">
+  <div class="tape tape-tl"></div>
+  <h3>Detección Automática del Tipo de Cámara</h3>
+
+  <div class="cmd" style="font-size:0.58rem;"><span class="comment"># 1. ¿Hay cámara CSI?</span>
+<span class="prompt">libcamera-hello --list-cameras</span>
+<span class="comment"># Si lista algo → CSI presente</span>
+<span class="comment"># Si error/vacío → No hay CSI, buscar USB</span>
+
+<span class="comment"># 2. ¿Qué formatos soporta?</span>
+<span class="prompt">v4l2-ctl --list-formats-ext -d /dev/video0</span>
+<span class="comment"># CSI típica:  aparece "H264" con resoluciones altas</span>
+<span class="comment"># USB típica:  aparece "MJPG" y/o "YUYV"</span>
+<span class="comment"># USB H.264 HW: aparece "H264" entre formatos</span>
+
+<span class="comment"># 3. Hardware detect (Fase 0)</span>
+<span class="comment"># hardware_detect.js retorna:</span>
+<span class="comment"># { type: 'csi'|'usb'|'usb-h264',</span>
+<span class="comment">#   device: '/dev/video0',</span>
+<span class="comment">#   formats: ['H264','MJPG',...] }</span></div>
+
+  <div class="tip">Fase 0 automatiza la detección: el pipeline se configura solo según el resultado de <code>hardware_detect.js</code>.</div>
+</div>
+
+<!-- ═══ TOOL COMPATIBILITY ═══ -->
+<div class="cutout">
+  <h3>Compatibilidad: Herramientas × Tipo de Cámara</h3>
+  <table class="tbl" style="font-size:0.58rem;">
+    <tr><th>Herramienta</th><th>CSI</th><th>USB</th><th>USB H.264</th><th>Notas</th></tr>
+    <tr><td>rpicam-vid</td><td>✔ óptimo</td><td>✘</td><td>✘</td><td>Zero-copy ISP directo</td></tr>
+    <tr><td>libcamera-vid</td><td>✔</td><td>✘</td><td>✘</td><td>Equivalente a rpicam-vid</td></tr>
+    <tr><td>ffmpeg -f v4l2</td><td>✔</td><td>✔ universal</td><td>✔ -c:v copy</td><td>Funciona con todo</td></tr>
+    <tr><td>go2rtc v4l2</td><td>✔</td><td>✔</td><td>✔</td><td>Sin ffmpeg necesario</td></tr>
+    <tr><td>µStreamer</td><td>✔ M2M HW</td><td>✔ MJPEG</td><td>✔ MJPEG</td><td>Ignora H.264 USB</td></tr>
+    <tr><td>MediaMTX rpiCam</td><td>✔ zero-copy</td><td>✘</td><td>✘</td><td>USB requiere ffmpeg</td></tr>
+    <tr><td>RPi-WebRTC</td><td>✔ MMAL</td><td>✘</td><td>✘</td><td>Solo CSI</td></tr>
+    <tr><td>v4l2-ctl</td><td>✔</td><td>✔</td><td>✔</td><td>Diagnóstico universal</td></tr>
+  </table>
+</div>
+
+<!-- ═══ KEYWORDS ═══ -->
+<div class="cutout" style="text-align:center;">
+  <span class="kw">rpicam-vid</span>
+  <span class="kw-inv">ffmpeg</span>
+  <span class="kw">h264_v4l2m2m</span>
+  <span class="kw-inv">V4L2</span>
+  <span class="kw">MJPEG</span>
+  <span class="kw-inv">passthrough</span>
+  <span class="kw">libcamera-hello</span>
+  <span class="kw-inv">v4l2-ctl</span>
+</div>
+
+<footer class="footer">
+  SPEC · Pipeline &amp; Comandos · CSI vs. USB ·
+  Fuente: web-rtc-ext.md EXT-2 + EXT-4
+</footer>
+
+</body>
+</html>

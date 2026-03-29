@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SPEC · go2rtc</title>
+<link rel="stylesheet" href="../poster-template/fanzine.css">
+</head>
+<body>
+
+<div class="nav-back">
+  <a href="../poster-arq1.html">◀ VOLVER AL POSTER</a> · SPEC · go2rtc
+</div>
+
+<header class="header" style="padding:18px 10px 14px;">
+  <div class="stamp">:1984</div>
+  <h1 style="font-size:1.8rem;">go2rtc</h1>
+  <div class="sub">Servidor media Go — captura V4L2/ALSA directa → MJPEG, HLS, WHEP, RTSP, snapshot</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ═══ IDENTITY ═══ -->
+<div class="cutout">
+  <h3>Identidad del Componente</h3>
+  <table class="tbl">
+    <tr><th>Campo</th><th>Valor</th></tr>
+    <tr><td>Repo</td><td>github.com/AlexxIT/go2rtc</td></tr>
+    <tr><td>Lenguaje</td><td>Go (binario estático)</td></tr>
+    <tr><td>Licencia</td><td>MIT</td></tr>
+    <tr><td>Binario ARM</td><td>~15 MB (pre-compilado, descargar y ejecutar)</td></tr>
+    <tr><td>RAM típica</td><td>~20–40 MB (depende de re-encode)</td></tr>
+    <tr><td>Ecosistema</td><td>Home Assistant, Frigate — miles de despliegues</td></tr>
+    <tr><td>Killer feature</td><td><span class="hl-box">V4L2 + ALSA directo → multi-protocolo sin ffmpeg</span></td></tr>
+  </table>
+</div>
+
+<!-- ═══ KEY CONCEPT ═══ -->
+<div class="cutout tilt-r">
+  <h3>Key Concept</h3>
+  <div class="key-concept">
+    go2rtc captura de fuentes heterogéneas (V4L2, ALSA, RTSP, exec, MJPEG…) y las re-sirve simultáneamente en múltiples formatos de salida. No es un transcoder pesado: reempaqueta cuando puede (PCMA→FLAC para MSE, passthrough H.264) y solo re-codifica cuando es estrictamente necesario. El resultado: un solo proceso reemplaza ffmpeg + servidor HTTP + lógica de streaming.
+  </div>
+</div>
+
+<!-- ═══ FULL CONFIG REFERENCE ═══ -->
+<div class="cutout tilt-l">
+  <h3>go2rtc.yaml — Referencia Completa</h3>
+  <div class="cmd"><span class="comment"># /etc/go2rtc/go2rtc.yaml</span>
+
+<span class="comment"># ── Streams ──</span>
+streams:
+  solar-cam:
+    - v4l2:///dev/video0               <span class="comment"># fuente principal (CSI o USB)</span>
+    <span class="comment"># Alternativas CSI más eficientes:</span>
+    <span class="comment"># - exec:rpicam-vid -t 0 --codec h264 --inline -w 1280 -h 720 -o -</span>
+    <span class="comment"># Alternativa USB con H.264 HW nativo:</span>
+    <span class="comment"># - v4l2:///dev/video0#format=h264</span>
+
+  solar-mic:
+    - alsa:///default                  <span class="comment"># micrófono USB</span>
+    <span class="comment"># go2rtc transcodifica PCMA/PCMU → FLAC para MSE/HLS auto</span>
+
+  <span class="comment"># Stream compuesto (vídeo + audio en uno):</span>
+  <span class="comment"># solar-av:</span>
+  <span class="comment">#   - v4l2:///dev/video0</span>
+  <span class="comment">#   - alsa:///default</span>
+
+<span class="comment"># ── API ──</span>
+api:
+  listen: "127.0.0.1:1984"            <span class="comment"># solo local (Oasis hace proxy)</span>
+  <span class="comment"># origin: "*"                       # CORS si se accede directo</span>
+
+<span class="comment"># ── RTSP (opcional, si otros servicios consumen) ──</span>
+rtsp:
+  listen: "127.0.0.1:8554"
+
+<span class="comment"># ── WebRTC (WHEP) ──</span>
+webrtc:
+  listen: ":8555"                     <span class="comment"># para clients con JS</span>
+  candidates:
+    - stun:stun.l.google.com:19302    <span class="comment"># solo LAN: no necesario</span>
+
+<span class="comment"># ── Log ──</span>
+log:
+  level: info                         <span class="comment"># debug | info | warn | error</span></div>
+</div>
+
+<!-- ═══ ENDPOINTS ═══ -->
+<div class="cutout">
+  <h3>API HTTP Endpoints (:1984)</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Endpoint</th><th>Formato</th><th>Content-Type</th><th>HTML sin JS</th><th>Latencia</th></tr>
+    <tr><td>/api/stream.mjpeg?src={name}</td><td>MJPEG continuo</td><td>multipart/x-mixed-replace</td><td>✔ <code>&lt;img&gt;</code></td><td>100–300 ms</td></tr>
+    <tr><td>/api/stream.m3u8?src={name}</td><td>HLS fMP4</td><td>application/vnd.apple.mpegurl</td><td>✔ <code>&lt;video&gt;</code></td><td>2–6 s</td></tr>
+    <tr><td>/api/stream.mp4?src={name}</td><td>MP4 progressive</td><td>video/mp4</td><td>✔ <code>&lt;video&gt;</code></td><td>~1 s</td></tr>
+    <tr><td>/api/frame.jpeg?src={name}</td><td>JPEG snapshot</td><td>image/jpeg</td><td>✔ <code>&lt;img&gt;</code></td><td>instant</td></tr>
+    <tr><td>/api/webrtc?src={name}</td><td>WHEP offer</td><td>application/sdp</td><td>✘ (JS)</td><td>~100 ms</td></tr>
+    <tr><td>/api/ws?src={name}</td><td>WebSocket</td><td>—</td><td>✘ (JS)</td><td>~100 ms</td></tr>
+    <tr><td>/api/streams</td><td>JSON status</td><td>application/json</td><td>N/A</td><td>—</td></tr>
+    <tr><td>/</td><td>Web UI</td><td>text/html</td><td>N/A</td><td>—</td></tr>
+  </table>
+  <div class="tip">Todos los endpoints video soportan parámetro <code>width</code> y <code>height</code> para redimensionar on-the-fly.</div>
+</div>
+
+<!-- ═══ TRANSCODING ═══ -->
+<div class="cutout tilt-r">
+  <h3>Transcodificación Automática</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Entrada</th><th>Salida</th><th>Proceso</th><th>CPU</th></tr>
+    <tr><td>H.264 (CSI rpicam-vid)</td><td>HLS fMP4</td><td>Reempaquetado (mux only)</td><td>~1%</td></tr>
+    <tr><td>H.264</td><td>MJPEG</td><td>Decode frame → JPEG</td><td>~5–10%</td></tr>
+    <tr><td>MJPEG (USB)</td><td>MJPEG stream</td><td>Passthrough</td><td>~0%</td></tr>
+    <tr><td>MJPEG (USB)</td><td>HLS</td><td>Re-encode H.264 (SW)</td><td>~15–25%</td></tr>
+    <tr><td>PCMA/PCMU (ALSA)</td><td>FLAC (MSE/HLS)</td><td>Transcode auto</td><td>~1%</td></tr>
+    <tr><td>PCMA/PCMU</td><td>Opus (WebRTC)</td><td>Resample + encode</td><td>~2%</td></tr>
+  </table>
+  <div class="warn"><b>Caso crítico</b>: USB MJPEG → HLS requiere re-encode H.264 en software (~15–25% CPU). Solución: si la webcam tiene H.264 HW nativo, usar <code>#format=h264</code> para passthrough.</div>
+</div>
+
+<!-- ═══ AUDIO DETAIL ═══ -->
+<div class="cutout">
+  <h3>Audio: ALSA → Browser</h3>
+  <div class="key-concept">go2rtc captura ALSA directamente — <b>ni MediaMTX ni µStreamer pueden hacer esto</b>. El audio pasa por la misma API que el vídeo. Para browser sin JS: HLS incluye audio automáticamente en el fMP4. Para browser con JS: WHEP entrega Opus.</div>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Ruta sin JS</th><th>HTML</th><th>Latencia</th></tr>
+    <tr><td>/api/stream.m3u8?src=solar-mic</td><td><code>&lt;video src="…" autoplay&gt;</code></td><td>2–6 s</td></tr>
+    <tr><td>/api/stream.m3u8?src=solar-av</td><td><code>&lt;video&gt;</code> (AV compuesto)</td><td>2–6 s</td></tr>
+  </table>
+  <div class="tip">Alternativa baja latencia: proxy Oasis con ffmpeg ALSA→OGG para <code>&lt;audio src="/audio.ogg"&gt;</code> (~200 ms). O Mumble bridge (Arq. 3) para bidireccional.</div>
+</div>
+
+<!-- ═══ V4L2 DETAILS ═══ -->
+<div class="cutout tilt-l">
+  <h3>V4L2: Detección y Formatos</h3>
+  <div class="cmd"><span class="comment"># Listar dispositivos</span>
+v4l2-ctl --list-devices
+
+<span class="comment"># Ver formatos soportados</span>
+v4l2-ctl -d /dev/video0 --list-formats-ext
+
+<span class="comment"># Verificar que go2rtc puede acceder</span>
+curl -s http://127.0.0.1:1984/api/streams | jq .</div>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Formato V4L2</th><th>go2rtc URL</th><th>Nota</th></tr>
+    <tr><td>MJPEG</td><td>v4l2:///dev/video0</td><td>Formato por defecto de la mayoría de webcams USB</td></tr>
+    <tr><td>H.264</td><td>v4l2:///dev/video0#format=h264</td><td>Solo webcams con H.264 HW (ej: Logitech C920)</td></tr>
+    <tr><td>YUYV</td><td>v4l2:///dev/video0#format=yuyv</td><td>Raw — go2rtc codifica a MJPEG/H.264 (CPU alto)</td></tr>
+  </table>
+</div>
+
+<!-- ═══ TROUBLESHOOTING ═══ -->
+<div class="cutout">
+  <h3>Troubleshooting</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Síntoma</th><th>Causa</th><th>Fix</th></tr>
+    <tr>
+      <td>v4l2: device busy</td>
+      <td>Otro proceso tiene /dev/video0</td>
+      <td><span class="hl-box">fuser -v /dev/video0</span> — matar proceso conflictivo</td>
+    </tr>
+    <tr>
+      <td>ALSA: no such device</td>
+      <td>Micrófono no detectado o nombre incorrecto</td>
+      <td><span class="hl-box">arecord -l</span> — verificar device. Puede ser <code>alsa:///hw:1,0</code></td>
+    </tr>
+    <tr>
+      <td>HLS: no audio</td>
+      <td>Stream de cámara no incluye audio</td>
+      <td>Crear stream compuesto solar-av con vídeo + audio como sources separados</td>
+    </tr>
+    <tr>
+      <td>MJPEG: imagen congelada</td>
+      <td>Buffer lleno, client lento</td>
+      <td>Reducir resolución o FPS. Verificar BW red.</td>
+    </tr>
+    <tr>
+      <td>Alta CPU (~25%)</td>
+      <td>Re-encode MJPEG→H.264 para HLS</td>
+      <td>Usar exec:rpicam-vid (CSI) o #format=h264 (USB con HW)</td>
+    </tr>
+    <tr>
+      <td>API 404 en /api/stream.*</td>
+      <td>Nombre de stream incorrecto en ?src=</td>
+      <td>Verificar en /api/streams que el nombre coincide con go2rtc.yaml</td>
+    </tr>
+    <tr>
+      <td>WebRTC no conecta (LAN)</td>
+      <td>Firewall bloquea UDP</td>
+      <td>Para cero-JS no se usa WebRTC. Si se necesita: abrir UDP 8555.</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ═══ KEYWORDS ═══ -->
+<div class="cutout" style="text-align:center;">
+  <span class="kw">go2rtc</span>
+  <span class="kw-inv">V4L2</span>
+  <span class="kw">ALSA</span>
+  <span class="kw-inv">MJPEG</span>
+  <span class="kw">HLS fMP4</span>
+  <span class="kw-inv">WHEP</span>
+  <span class="kw">FLAC</span>
+  <span class="kw-inv">passthrough</span>
+  <span class="kw">:1984</span>
+  <span class="kw-inv">snapshot</span>
+</div>
+
+<footer class="footer">
+  SPEC · go2rtc · Arq. 1 · SSB-WebRTC · Solar Net Hub
+</footer>
+
+</body>
+</html>

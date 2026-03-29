@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Matriz de Decisión — Arquitecturas SSB-WebRTC</title>
+<link rel="stylesheet" href="poster-template/fanzine.css">
+<style>
+  .flow { font-size: 0.65rem; line-height: 1.5; }
+  .flow b { font-size: 0.7rem; }
+  .arq-tag { display: inline-block; border: 2px solid #111; padding: 1px 6px;
+             font-size: 0.62rem; font-weight: bold; margin: 1px 2px; }
+  .arq-tag.selected { background: #111; color: #fff; }
+  .prio-row td:first-child { font-weight: bold; font-size: 0.8rem; }
+  .link-poster { display: inline-block; background: #111; color: #fff;
+                 padding: 3px 8px; text-decoration: none; font-size: 0.65rem;
+                 font-weight: bold; margin: 2px 0; }
+  .link-poster:hover { background: #444; }
+  .no-poster { display: inline-block; border: 1px dashed #999; color: #999;
+               padding: 3px 8px; font-size: 0.65rem; margin: 2px 0; }
+</style>
+</head>
+<body>
+
+<!-- ════════════ HEADER ════════════ -->
+<header class="header">
+  <div class="stamp">DECISIÓN</div>
+  <h1>Matriz de Arquitecturas</h1>
+  <div class="sub">CSI / USB × Fase × Tor × RAM</div>
+  <div class="sub2">¿Qué arquitectura elegir para el Solar Net Hub?</div>
+  <div class="issue">web-rtc.md §2.2 · web-rtc-ext.md EXT-7</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ════════════ 6 ARCHITECTURES AT A GLANCE ════════════ -->
+<div class="cutout">
+  <h3>☞ 6 Arquitecturas — Vista Rápida</h3>
+  <table class="tbl" style="font-size:0.62rem;">
+    <tr>
+      <th></th>
+      <th>Arq. 1</th>
+      <th>Arq. 2</th>
+      <th>Arq. 3 ★★</th>
+      <th>Arq. 4</th>
+      <th>Arq. 5</th>
+      <th>Arq. 6 ★</th>
+    </tr>
+    <tr>
+      <td><b>Stack</b></td>
+      <td>go2rtc integral</td>
+      <td>MediaMTX + rpicam</td>
+      <td>Mumble + go2rtc + datachannel</td>
+      <td>ffmpeg → HLS</td>
+      <td>RPi-WebRTC nativo</td>
+      <td>µStreamer + Mumble</td>
+    </tr>
+    <tr>
+      <td><b>RAM nueva</b></td>
+      <td>~20-40 MB</td>
+      <td>~15-30 MB</td>
+      <td>~65 MB (+20 nuevos)</td>
+      <td>~30 MB</td>
+      <td>~80-100 MB</td>
+      <td><b>~10-20 MB</b></td>
+    </tr>
+    <tr>
+      <td><b>Cam CSI</b></td>
+      <td>✔</td><td>✔ zero-copy</td><td>✔</td><td>✔</td><td>✔ nativo</td><td>✔ M2M HW</td>
+    </tr>
+    <tr>
+      <td><b>Cam USB</b></td>
+      <td>✔</td><td>⚠️ ffmpeg</td><td>✔</td><td>✔</td><td><b>✘</b></td><td>✔</td>
+    </tr>
+    <tr>
+      <td><b>Audio Tor</b></td>
+      <td>⚠️ TURN</td><td>⚠️ TURN</td><td><b>✔ Mumble TCP</b></td><td>✔ HTTP</td><td>⚠️ TURN</td><td><b>✔ Mumble TCP</b></td>
+    </tr>
+    <tr>
+      <td><b>Bidireccional</b></td>
+      <td>✔ WHEP</td><td>✔ WebRTC</td><td>✔ Mumble</td><td>✘</td><td>✔ P2P</td><td>✔ Mumble</td>
+    </tr>
+    <tr>
+      <td><b>0 JS browser</b></td>
+      <td>✔</td><td>✔</td><td>✔</td><td>✔</td><td>✔ vía proxy</td><td>✔</td>
+    </tr>
+    <tr>
+      <td><b>Complejidad</b></td>
+      <td>Baja</td><td>Media</td><td>Media</td><td>Mínima</td><td>Alta</td><td><b>Baja</b></td>
+    </tr>
+    <tr>
+      <td><b>Spec</b></td>
+      <td><span class="no-poster">pendiente</span></td>
+      <td><span class="no-poster">pendiente</span></td>
+      <td><a class="link-poster" href="poster-arq3.html">☞ POSTER</a></td>
+      <td><span class="no-poster">pendiente</span></td>
+      <td><span class="no-poster">pendiente</span></td>
+      <td><a class="link-poster" href="poster-arq6.html">☞ POSTER</a></td>
+    </tr>
+  </table>
+</div>
+
+<!-- ════════════ STATS BAR ════════════ -->
+<div class="stats-bar tilt-r">
+  <div class="stat"><span class="val">6</span><span class="lbl">Arquitecturas</span></div>
+  <div class="stat"><span class="val">2</span><span class="lbl">Elegidas (★)</span></div>
+  <div class="stat"><span class="val">1 GB</span><span class="lbl">RAM total</span></div>
+  <div class="stat"><span class="val">22W</span><span class="lbl">Solar</span></div>
+  <div class="stat"><span class="val">CSI+USB</span><span class="lbl">Cámaras</span></div>
+</div>
+
+<!-- ════════════ DECISION FLOWCHART ════════════ -->
+<div class="cutout diagram-wrap">
+  <div class="tape tape-tl"></div>
+  <div class="tape tape-tr"></div>
+  <h2>☞ Árbol de Decisión</h2>
+<pre class="diagram">
+ ¿Qué cámara tengo / quiero?
+ ════════════════════════════
+
+ ¿Tengo cámara CSI en RPi?
+   SÍ → ¿Quiero máxima eficiencia HW encode?
+          SÍ → MediaMTX (zero-copy)          → Arq. 2
+               o RPi-WebRTC (si P2P nativo)  → Arq. 5
+          NO → go2rtc (CSI vía v4l2, simple) → Arq. 1
+               o µStreamer (MJPEG + RAM mín.) → Arq. 6 ★
+
+ ¿Tengo cámara USB?
+   SÍ → ¿Webcam con H.264 HW integrado?
+          SÍ → go2rtc v4l2 (passthrough)     → Arq. 1
+          NO → go2rtc v4l2 (MJPEG)           → Arq. 1
+               o µStreamer v4l2 (solo MJPEG)  → Arq. 6 ★
+        RPi-WebRTC DESCARTADO (no soporta USB)
+        MediaMTX requiere ffmpeg → menos ventaja
+
+ ¿Podría tener ambas o cambiar en el futuro?
+   SÍ → go2rtc + hardware_detect.js    (Arq. 1)
+        o µStreamer + hardware_detect.js (Arq. 6)
+
+ ¿Necesito audio sobre Tor?
+   SÍ → Mumble (invariante de CSI/USB)
+        + go2rtc (si HLS remoto)             → Arq. 3 ★★
+        + µStreamer (si solo MJPEG LAN)       → Arq. 6 ★
+
+ ¿Solo LAN, RAM mínima, pipeline simple?
+   SÍ → µStreamer + Mumble                   → Arq. 6 ★
+</pre>
+</div>
+
+<!-- ════════════ CALLOUT ════════════ -->
+<div class="callout tilt-l">
+  ★★ Mumble es agnóstico de cámara. El audio no depende de CSI/USB. ★★
+</div>
+
+<!-- ════════════ TWO COLUMNS ════════════ -->
+<div class="cols">
+
+  <div class="col">
+    <!-- PRIORITY TABLE -->
+    <div class="cutout tilt-l">
+      <div class="tape tape-tr"></div>
+      <h3>Ranking por Prioridad</h3>
+      <table class="tbl" style="font-size:0.65rem;">
+        <tr><th>Prio</th><th>Arq.</th><th>Condición</th></tr>
+        <tr class="prio-row">
+          <td>1ª</td>
+          <td><span class="arq-tag selected">Arq. 3</span></td>
+          <td>Siempre válida. CSI+USB. Tor. Audio superior. HLS remoto</td>
+        </tr>
+        <tr class="prio-row">
+          <td>1ª bis</td>
+          <td><span class="arq-tag selected">Arq. 6</span></td>
+          <td>Solo LAN / RAM crítica. CSI+USB. MJPEG only. La más ligera</td>
+        </tr>
+        <tr class="prio-row">
+          <td>2ª</td>
+          <td><span class="arq-tag">Arq. 1</span></td>
+          <td>Sin Tor para audio. Simplicidad máxima, un solo binario</td>
+        </tr>
+        <tr class="prio-row">
+          <td>3ª</td>
+          <td><span class="arq-tag">Arq. 2</span></td>
+          <td>Solo CSI fija. Cada mW cuenta. No se prevé USB</td>
+        </tr>
+        <tr class="prio-row">
+          <td>4ª</td>
+          <td><span class="arq-tag">Arq. 5</span></td>
+          <td>Solo CSI. WebRTC P2P real. No Tor. Riesgo mantenimiento</td>
+        </tr>
+        <tr class="prio-row">
+          <td>5ª</td>
+          <td><span class="arq-tag">Arq. 4</span></td>
+          <td>Mínima. ffmpeg→HLS. 4-12s latencia. Escribe a microSD</td>
+        </tr>
+      </table>
+
+      <div class="key-concept" style="margin-top:8px;">
+        <b>¿Por qué Arq. 3 y 6?</b> — Son las únicas que reutilizan Mumble (ya instalado, +0 MB, compatible Tor). Las demás requieren instalar audio nuevo o renunciar a Tor.
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <!-- CAMERA × ARCHITECTURE × PHASE -->
+    <div class="cutout tilt-r">
+      <div class="tape tape-tl"></div>
+      <h3>Cámara × Fase × Arq.</h3>
+      <table class="tbl" style="font-size:0.6rem;">
+        <tr><th>Cam</th><th>Fase 1 (LAN)</th><th>Fase 3 (Internet)</th><th>Fase 3 + Tor</th></tr>
+        <tr>
+          <td><b>CSI</b></td>
+          <td>Arq. 6 (µS)<br>Arq. 1 (go2rtc)<br>Arq. 2 (MTX)</td>
+          <td>Arq. 3 (Mumble+HLS)<br>Arq. 5 (P2P)</td>
+          <td><b>Arq. 3</b></td>
+        </tr>
+        <tr>
+          <td><b>USB</b></td>
+          <td>Arq. 6 (µS)<br>Arq. 1 (go2rtc)</td>
+          <td>Arq. 3 (Mumble+HLS)</td>
+          <td><b>Arq. 3</b></td>
+        </tr>
+        <tr>
+          <td><b>USB H.264</b></td>
+          <td>Arq. 1 (pass)</td>
+          <td>Arq. 3</td>
+          <td><b>Arq. 3</b></td>
+        </tr>
+        <tr>
+          <td><b>Ambas</b></td>
+          <td>Arq. 6 o 1<br>+ hw_detect</td>
+          <td>Arq. 3 + detect</td>
+          <td><b>Arq. 3</b></td>
+        </tr>
+      </table>
+
+      <div class="warn" style="margin-top:8px;">Fase 3 + Tor: SIEMPRE Arq. 3. Mumble TCP tunnel es la única vía de audio que funciona sobre hidden services sin TURN.</div>
+    </div>
+  </div>
+
+</div><!-- /cols -->
+
+<div class="washi"></div>
+
+<!-- ════════════ THE TWO CHOSEN ARCHITECTURES ════════════ -->
+<div class="cutout">
+  <h3>☞ Las 2 Elegidas — Detalle Rápido</h3>
+
+  <div class="cols" style="gap:10px;">
+    <div class="col">
+      <div class="card">
+        <div class="card-title">Arq. 3 — Mumble + go2rtc + datachannel</div>
+        <div class="card-body" style="font-size:0.65rem;">
+          <b>General purpose</b> · LAN + Remoto + Tor · ~65 MB RAM<br>
+          Vídeo: go2rtc (MJPEG + HLS) · Audio: murmurd (bridge HTTP 3A + cliente nativo 3C)<br>
+          Datos: node-datachannel (SDP via SSB)<br><br>
+          <b>Ventaja decisiva</b>: audio sobre Tor vía TCP tunnel nativo de Mumble.<br>
+          <b>Cuándo</b>: siempre que haya posibilidad de acceso remoto o Tor.
+          <br><br>
+          <a class="link-poster" href="poster-arq3.html">☞ VER POSTER COMPLETO</a>
+          <div style="margin-top:4px;">
+            <a class="deep-link" href="spec-arq3/go2rtc.html">go2rtc</a> ·
+            <a class="deep-link" href="spec-arq3/mumble-bridge.html">mumble bridge</a> ·
+            <a class="deep-link" href="spec-arq3/oasis-proxy.html">oasis proxy</a> ·
+            <a class="deep-link" href="spec-arq3/datachannel.html">datachannel</a> ·
+            <a class="deep-link" href="spec-arq3/deploy.html">deploy</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="card">
+        <div class="card-title">Arq. 6 — µStreamer + Mumble + datachannel</div>
+        <div class="card-body" style="font-size:0.65rem;">
+          <b>Ultra-ligera</b> · Solo LAN · ~10-20 MB RAM · MJPEG only<br>
+          Vídeo: µStreamer (V4L2 → MJPEG HTTP) · Audio: murmurd (bridge HTTP 3A)<br>
+          Datos: node-datachannel (SDP via SSB)<br><br>
+          <b>Ventaja decisiva</b>: RAM mínima, CPU mínima, pipeline simple.<br>
+          <b>Cuándo</b>: solo LAN, no necesita HLS/WebRTC remoto.
+          <br><br>
+          <a class="link-poster" href="poster-arq6.html">☞ VER POSTER COMPLETO</a>
+          <div style="margin-top:4px;">
+            <a class="deep-link" href="spec-arq6/ustreamer.html">µStreamer</a> ·
+            <a class="deep-link" href="spec-arq6/mumble-bridge.html">mumble bridge</a> ·
+            <a class="deep-link" href="spec-arq6/oasis-proxy.html">oasis proxy</a> ·
+            <a class="deep-link" href="spec-arq6/datachannel.html">datachannel</a> ·
+            <a class="deep-link" href="spec-arq6/deploy.html">deploy</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════ WHY NOT THE OTHERS ════════════ -->
+<div class="cutout tilt-r">
+  <div class="tape tape-tl"></div>
+  <h3>¿Por Qué No las Otras?</h3>
+  <table class="tbl" style="font-size:0.63rem;">
+    <tr><th>Arq.</th><th>Descarte / Condición</th></tr>
+    <tr>
+      <td><span class="arq-tag">1 · go2rtc</span></td>
+      <td>Excelente si no se necesita Tor para audio. Pero audio vía WHEP/WebRTC no funciona sobre hidden services. Sin Mumble, pierde la ventaja de privacidad de Arq. 3.</td>
+    </tr>
+    <tr>
+      <td><span class="arq-tag">2 · MediaMTX</span></td>
+      <td>Zero-copy CSI es atractivo para ahorrar mW pero <b>no soporta USB</b> sin ffmpeg intermedio. Pierde flexibilidad. Solo justificable si la cámara CSI es fija y permanente.</td>
+    </tr>
+    <tr>
+      <td><span class="arq-tag">4 · ffmpeg→HLS</span></td>
+      <td>Latencia 4-12s inaceptable para comunicación. Escribe segmentos .ts a microSD constantemente. No bidireccional. Solo útil como fallback de emergencia.</td>
+    </tr>
+    <tr>
+      <td><span class="arq-tag">5 · RPi-WebRTC</span></td>
+      <td>Solo CSI (hard requirement). Mantenimiento irregular del proyecto upstream. ~80-100 MB RAM. Si se necesita P2P WebRTC real con CSI fija y sin Tor, es una opción nicho.</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ════════════ COMPARATIVE BIG TABLE ════════════ -->
+<div class="cutout">
+  <h3>Comparativa Detallada — Arq. 1 vs 3 vs 6</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th></th><th>Arq. 1 (go2rtc)</th><th>Arq. 3 (Mumble hybrid) ★★</th><th>Arq. 6 (µStreamer) ★</th></tr>
+    <tr><td><b>RAM adicional</b></td><td>~20-40 MB</td><td>~65 MB (~20 nuevos)</td><td><b>~10-20 MB</b></td></tr>
+    <tr><td><b>CPU streaming</b></td><td>~10-15%</td><td>~12-20%</td><td><b>~3-8%</b> (M2M HW)</td></tr>
+    <tr><td><b>Latencia vídeo</b></td><td>100-300 ms</td><td>100-300 ms (MJPEG)</td><td>~50-100 ms (MJPEG)</td></tr>
+    <tr><td><b>Latencia audio</b></td><td>200 ms (OGG) / 2 s (HLS)</td><td>~200 ms (bridge) / ~20 ms (nativo)</td><td>~200 ms (bridge)</td></tr>
+    <tr><td><b>Necesita ffmpeg</b></td><td>No</td><td>Solo audio bridge</td><td>Solo audio bridge</td></tr>
+    <tr><td><b>Audio Tor</b></td><td>⚠️ TURN</td><td><b>✔ Mumble TCP</b></td><td><b>✔ Mumble TCP</b></td></tr>
+    <tr><td><b>Protocolos vídeo</b></td><td>MJPEG + HLS + WHEP</td><td>MJPEG + HLS (go2rtc)</td><td>MJPEG only</td></tr>
+    <tr><td><b>Reutiliza murmurd</b></td><td>✘</td><td><b>✔ (+0 MB)</b></td><td><b>✔ (+0 MB)</b></td></tr>
+    <tr><td><b>Código audio nuevo</b></td><td>~50 lín config</td><td>~100 lín bridge</td><td>~100 lín bridge</td></tr>
+    <tr><td><b>Mantenimiento deps</b></td><td>Bajo</td><td>Medio (gumble+go2rtc)</td><td><b>Bajo</b></td></tr>
+    <tr><td><b>Caso de uso</b></td><td>Simple, sin Tor</td><td>General, LAN+Remoto+Tor</td><td>Ultra-ligero, solo LAN</td></tr>
+  </table>
+</div>
+
+<!-- ════════════ CONTEXT ════════════ -->
+<div class="cutout tilt-l" style="font-size:0.68rem;">
+  <div class="tape tape-tr"></div>
+  <h3>Contexto del Device</h3>
+  <table class="tbl">
+    <tr><th>Device</th><td>RPi 3B · BCM2837 · 1 GB LPDDR2 · VideoCore IV</td></tr>
+    <tr><th>OS stack</th><td>Yocto Poky 4.3.4 → Docker → Debian Bookworm</td></tr>
+    <tr><th>Energía</th><td>Solar 22W</td></tr>
+    <tr><th>App</th><td>Oasis :3000 (Node.js / SSB) · cero JS en browser</td></tr>
+    <tr><th>Audio base</th><td>murmurd :64738 (Mumble) · ya instalado · +0 MB</td></tr>
+    <tr><th>Restricción</th><td>Cero JavaScript en el browser del SNH servido por Oasis</td></tr>
+  </table>
+</div>
+
+<!-- ════════════ KEYWORDS ════════════ -->
+<div class="cutout" style="text-align:center;">
+  <span class="kw">go2rtc</span>
+  <span class="kw-inv">µStreamer</span>
+  <span class="kw">Mumble</span>
+  <span class="kw-inv">MediaMTX</span>
+  <span class="kw">RPi-WebRTC</span>
+  <span class="kw-inv">HLS</span>
+  <span class="kw">MJPEG</span>
+  <span class="kw-inv">Tor</span>
+  <span class="kw">WHEP</span>
+  <span class="kw-inv">CSI</span>
+  <span class="kw">USB</span>
+  <span class="kw-inv">node-datachannel</span>
+  <span class="kw">gumble</span>
+</div>
+
+<footer class="footer">
+  MATRIZ DE DECISIÓN · SSB-WebRTC · Solar Net Hub ·
+  Fuente: web-rtc.md §2.2 + web-rtc-ext.md EXT-7
+</footer>
+
+</body>
+</html>

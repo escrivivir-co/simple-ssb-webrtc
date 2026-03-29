@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SPEC · MediaMTX</title>
+<link rel="stylesheet" href="../poster-template/fanzine.css">
+</head>
+<body>
+
+<div class="nav-back">
+  <a href="../poster-arq2.html">◀ VOLVER AL POSTER</a> · SPEC · MediaMTX
+</div>
+
+<header class="header" style="padding:18px 10px 14px;">
+  <div class="stamp">:8554</div>
+  <h1 style="font-size:1.8rem;">MediaMTX</h1>
+  <div class="sub">Router de protocolos media — RTSP↔HLS↔WebRTC↔RTMP auto-conversión, rpicam nativo CSI</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ═══ IDENTITY ═══ -->
+<div class="cutout">
+  <h3>Identidad del Componente</h3>
+  <table class="tbl">
+    <tr><th>Campo</th><th>Valor</th></tr>
+    <tr><td>Repo</td><td>github.com/bluenviron/mediamtx</td></tr>
+    <tr><td>Nombre anterior</td><td>rtsp-simple-server</td></tr>
+    <tr><td>Lenguaje</td><td>Go (basado en Pion/webrtc)</td></tr>
+    <tr><td>Licencia</td><td>MIT</td></tr>
+    <tr><td>GitHub ★</td><td>~13k</td></tr>
+    <tr><td>Binario</td><td>~20 MB (estático, ARM pre-compilado)</td></tr>
+    <tr><td>RAM típica</td><td>~15–30 MB</td></tr>
+    <tr><td>Install</td><td><span class="hl-box">wget + chmod</span> (binario Go pre-compilado ARM)</td></tr>
+    <tr><td>Killer feature</td><td>Auto-conversión entre protocolos + rpicam nativo CSI</td></tr>
+  </table>
+</div>
+
+<!-- ═══ KEY CONCEPT ═══ -->
+<div class="cutout tilt-r">
+  <h3>Key Concept</h3>
+  <div class="key-concept">
+    MediaMTX es un <b>router de protocolos</b>: cualquier fuente publicada (RTSP, RTMP, WebRTC, rpicam) se auto-convierte a todos los demás formatos sin configuración adicional. Publicas un stream → sale en HLS, WebRTC, RTSP, RTMP, SRT automáticamente. Esto simplifica enormemente la arquitectura frente a pipelines manuales con ffmpeg.
+  </div>
+</div>
+
+<!-- ═══ PORTS ═══ -->
+<div class="cutout">
+  <h3>Puertos &amp; Protocolos</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Puerto</th><th>Protocolo</th><th>Uso</th><th>Browser sin JS</th></tr>
+    <tr><td><b>:8554</b></td><td>RTSP</td><td>Protocolo base. Entrada y salida.</td><td>✘</td></tr>
+    <tr><td><b>:8888</b></td><td>HLS</td><td><code>&lt;video src="…/stream.m3u8"&gt;</code></td><td>✔ Safari nativo</td></tr>
+    <tr><td><b>:8889</b></td><td>WebRTC</td><td>Peer remoto con JS (WHEP)</td><td>✘ (requiere JS)</td></tr>
+    <tr><td><b>:1935</b></td><td>RTMP</td><td>Re-stream a YouTube/Twitch</td><td>✘</td></tr>
+    <tr><td><b>:8890</b></td><td>SRT</td><td>Link low-latency (Haivision)</td><td>✘</td></tr>
+    <tr><td><b>:9997</b></td><td>API HTTP</td><td>Control, status, configuración</td><td>N/A</td></tr>
+  </table>
+</div>
+
+<!-- ═══ CONFIG CSI ═══ -->
+<div class="cutout tilt-l">
+  <h3>Configuración Completa — CSI (rpicam nativo)</h3>
+  <div class="cmd"><span class="comment"># /etc/mediamtx/mediamtx.yml</span>
+
+<span class="comment"># ── Puertos ──</span>
+rtspAddress: 127.0.0.1:8554
+hlsAddress: 127.0.0.1:8888
+webrtcAddress: 127.0.0.1:8889
+rtmpAddress: ""               <span class="comment"># desactivar si no se necesita</span>
+srtAddress: ""                 <span class="comment"># desactivar si no se necesita</span>
+apiAddress: 127.0.0.1:9997
+
+<span class="comment"># ── HLS config ──</span>
+hlsVariant: lowLatency         <span class="comment"># fMP4 low-latency (vs mpegts)</span>
+hlsSegmentCount: 3
+hlsSegmentDuration: 1s
+hlsPartDuration: 200ms
+
+<span class="comment"># ── Auth (opcional) ──</span>
+authMethod: internal
+authInternalUsers:
+  - user: oasis
+    pass: "${MEDIAMTX_PASSWORD}"
+    permissions:
+      - action: read
+        path: solar-cam
+
+<span class="comment"># ── Paths ──</span>
+paths:
+  solar-cam:
+    source: rpiCamera
+    rpiCameraWidth: 1280
+    rpiCameraHeight: 720
+    rpiCameraFPS: 25
+    rpiCameraCodec: h264
+    rpiCameraProfile: baseline
+    rpiCameraLevel: "3.1"
+    rpiCameraBitrate: 1000000
+    rpiCameraIDRPeriod: 50        <span class="comment"># IDR cada 2s (25fps×2)</span>
+    <span class="comment"># Hooks</span>
+    runOnReady: curl -s http://localhost:3000/hook/stream-ready
+    runOnNotReady: curl -s http://localhost:3000/hook/stream-stopped</div>
+</div>
+
+<!-- ═══ CONFIG USB ═══ -->
+<div class="cutout">
+  <h3>Configuración — USB (ffmpeg exec)</h3>
+  <div class="cmd"><span class="comment"># mediamtx.yml — paths para cámara USB</span>
+paths:
+  solar-cam:
+    <span class="comment"># USB: ffmpeg captura V4L2, transcodifica, publica RTSP local</span>
+    runOnInit: &gt;
+      ffmpeg -f v4l2 -input_format mjpeg
+      -video_size 1280x720 -framerate 25
+      -i /dev/video0
+      -c:v h264_v4l2m2m -b:v 1M
+      -f rtsp rtsp://localhost:$RTSP_PORT/$MTX_PATH
+    runOnInitRestart: yes
+    <span class="comment"># Si la webcam tiene H.264 HW nativo:</span>
+    <span class="comment"># runOnInit: &gt;</span>
+    <span class="comment">#   ffmpeg -f v4l2 -input_format h264</span>
+    <span class="comment">#   -video_size 1280x720 -i /dev/video0</span>
+    <span class="comment">#   -c:v copy -f rtsp rtsp://localhost:$RTSP_PORT/$MTX_PATH</span></div>
+  <div class="warn">Con USB, MediaMTX pierde su ventaja sobre go2rtc: ambos necesitan ffmpeg. go2rtc captura V4L2 directo sin ffmpeg intermediario.</div>
+</div>
+
+<!-- ═══ AUDIO CONFIG ═══ -->
+<div class="cutout tilt-r">
+  <h3>Audio: ffmpeg → RTSP</h3>
+  <div class="key-concept">MediaMTX no captura ALSA directamente. El audio necesita un proceso ffmpeg aparte publicando en otro path RTSP.</div>
+  <div class="cmd"><span class="comment"># mediamtx.yml — audio path</span>
+paths:
+  solar-mic:
+    runOnInit: &gt;
+      ffmpeg -f alsa -i default
+      -c:a aac -b:a 64k
+      -f rtsp rtsp://localhost:$RTSP_PORT/$MTX_PATH
+    runOnInitRestart: yes</div>
+  <div class="tip">Alternativa: usar <b>Mumble</b> para audio (ya instalado, bidireccional, Tor-compatible). Ver <a href="../poster-arq3.html">Arq. 3</a> para el bridge Mumble→HTTP.</div>
+</div>
+
+<!-- ═══ API ═══ -->
+<div class="cutout">
+  <h3>API HTTP (:9997)</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Endpoint</th><th>Método</th><th>Función</th></tr>
+    <tr><td>/v3/paths/list</td><td>GET</td><td>Listar paths activos + estado</td></tr>
+    <tr><td>/v3/paths/get/{name}</td><td>GET</td><td>Detalle de un path (readers, source)</td></tr>
+    <tr><td>/v3/config/global/patch</td><td>PATCH</td><td>Modificar config en caliente</td></tr>
+    <tr><td>/v3/config/paths/add/{name}</td><td>POST</td><td>Añadir path en caliente</td></tr>
+    <tr><td>/v3/config/paths/remove/{name}</td><td>DELETE</td><td>Eliminar path en caliente</td></tr>
+    <tr><td>/v3/hlsmuxers/list</td><td>GET</td><td>Listar muxers HLS activos</td></tr>
+    <tr><td>/v3/webrtcsessions/list</td><td>GET</td><td>Listar sesiones WebRTC activas</td></tr>
+  </table>
+  <div class="tip">Útil para que Oasis (Node.js) consulte estado de streams y gestione paths dinámicamente sin reiniciar MediaMTX.</div>
+</div>
+
+<!-- ═══ OASIS INTEGRATION ═══ -->
+<div class="cutout tilt-l">
+  <h3>Integración con Oasis</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Ruta Oasis</th><th>Origen</th><th>Content-Type</th><th>HTML</th></tr>
+    <tr>
+      <td>GET /video.m3u8</td>
+      <td>Proxy → MediaMTX :8888/solar-cam/</td>
+      <td>application/vnd.apple.mpegurl</td>
+      <td><code>&lt;video src="/video.m3u8"&gt;</code></td>
+    </tr>
+    <tr>
+      <td>GET /snapshot</td>
+      <td>ffmpeg grab de RTSP → JPEG (on demand)</td>
+      <td>image/jpeg</td>
+      <td><code>&lt;img src="/snapshot"&gt;</code></td>
+    </tr>
+    <tr>
+      <td>GET /audio</td>
+      <td>Mumble bridge (recomendado) o ffmpeg RTSP→OGG</td>
+      <td>audio/ogg</td>
+      <td><code>&lt;audio src="/audio"&gt;</code></td>
+    </tr>
+  </table>
+  <div class="warn"><b>MJPEG continuo</b> no está disponible nativamente en MediaMTX. Para browsers LAN sin JS que no soportan HLS nativo (Firefox/Chrome), usar snapshot + <code>&lt;meta http-equiv="refresh" content="2"&gt;</code> o proxy ffmpeg RTSP→MJPEG.</div>
+</div>
+
+<!-- ═══ TROUBLESHOOTING ═══ -->
+<div class="cutout">
+  <h3>Troubleshooting</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Síntoma</th><th>Causa</th><th>Fix</th></tr>
+    <tr>
+      <td>rpiCamera: not found</td>
+      <td>libcamera no disponible en el sistema</td>
+      <td><span class="hl-box">apt install libcamera-apps</span>. Verificar dtoverlay en config.txt</td>
+    </tr>
+    <tr>
+      <td>HLS no arranca (404)</td>
+      <td>No hay viewer → stream no se activa</td>
+      <td>MediaMTX es on-demand. El stream arranca con el primer viewer.</td>
+    </tr>
+    <tr>
+      <td>Latencia HLS alta (&gt;5s)</td>
+      <td>Segmentos HLS grandes</td>
+      <td>Usar <code>hlsVariant: lowLatency</code> + <code>hlsPartDuration: 200ms</code></td>
+    </tr>
+    <tr>
+      <td>ffmpeg runOnInit falla</td>
+      <td>Variables $RTSP_PORT/$MTX_PATH no expandidas</td>
+      <td>Verificar que se usa YAML multiline (<code>&gt;</code>). MediaMTX inyecta las variables.</td>
+    </tr>
+    <tr>
+      <td>Alta CPU con USB</td>
+      <td>ffmpeg transcoding software</td>
+      <td>Usar <code>h264_v4l2m2m</code> para encode HW. Reducir resolución.</td>
+    </tr>
+    <tr>
+      <td>Auth rechaza conexión</td>
+      <td>authMethod activo, credenciales incorrectas</td>
+      <td>Verificar MEDIAMTX_PASSWORD env var. O poner <code>authMethod: ""</code> para deshabilitar.</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ═══ KEYWORDS ═══ -->
+<div class="cutout" style="text-align:center;">
+  <span class="kw">MediaMTX</span>
+  <span class="kw-inv">RTSP</span>
+  <span class="kw">HLS</span>
+  <span class="kw-inv">rpiCamera</span>
+  <span class="kw">auto-conversión</span>
+  <span class="kw-inv">hooks</span>
+  <span class="kw">Pion</span>
+  <span class="kw-inv">mediamtx.yml</span>
+  <span class="kw">lowLatency</span>
+  <span class="kw-inv">API v3</span>
+</div>
+
+<footer class="footer">
+  SPEC · MediaMTX · Arq. 2 · SSB-WebRTC · Solar Net Hub
+</footer>
+
+</body>
+</html>

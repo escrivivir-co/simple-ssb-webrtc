@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SPEC · Deploy &amp; Ops — Arq. 5</title>
+<link rel="stylesheet" href="../poster-template/fanzine.css">
+</head>
+<body>
+
+<div class="nav-back">
+  <a href="../poster-arq5.html">◀ VOLVER AL POSTER</a> · SPEC · Deploy &amp; Ops
+</div>
+
+<header class="header" style="padding:18px 10px 14px;">
+  <div class="stamp">OPS</div>
+  <h1 style="font-size:1.8rem;">Deploy &amp; Ops</h1>
+  <div class="sub">Arq. 5 — systemd, cross-compile, fallback, monitorización</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ═══ KEY CONCEPT ═══ -->
+<div class="cutout tilt-r">
+  <h3>Key Concept</h3>
+  <div class="key-concept">
+    Arq. 5 tiene la <b>mayor complejidad de despliegue</b> de todas las arquitecturas: cross-compile de libwebrtc (~4 GB), binario C++ específico de RPi, y un proxy Node.js con ffmpeg. Se documenta el proceso completo y las estrategias de fallback.
+  </div>
+</div>
+
+<!-- ═══ PRE-FLIGHT ═══ -->
+<div class="cutout">
+  <h3>☞ Pre-Flight Checklist</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>#</th><th>Verificación</th><th>Comando</th><th>Esperado</th></tr>
+    <tr>
+      <td>1</td>
+      <td>Cámara CSI presente</td>
+      <td><span class="hl-box">libcamera-hello --list-cameras</span></td>
+      <td>Al menos 1 cámara listada</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td>VideoCore accesible</td>
+      <td><span class="hl-box">ls /dev/vchiq</span></td>
+      <td>Existe (para H.264 HW encode)</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td>GPU memory ≥ 128 MB</td>
+      <td><span class="hl-box">vcgencmd get_mem gpu</span></td>
+      <td>gpu=128M o más</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td>ffmpeg instalado</td>
+      <td><span class="hl-box">ffmpeg -version</span></td>
+      <td>ffmpeg 5.x+ con decoders h264, opus</td>
+    </tr>
+    <tr>
+      <td>5</td>
+      <td>node-datachannel instalable</td>
+      <td><span class="hl-box">npm ls node-datachannel</span></td>
+      <td>v0.32+ con prebuild ARM</td>
+    </tr>
+    <tr>
+      <td>6</td>
+      <td>RPi-WebRTC binario</td>
+      <td><span class="hl-box">/opt/rpi-webrtc/rws --version</span></td>
+      <td>Ejecutable, no SIGILL</td>
+    </tr>
+    <tr>
+      <td>7</td>
+      <td>Puerto 8889 libre</td>
+      <td><span class="hl-box">ss -tlnp | grep 8889</span></td>
+      <td>Nada escuchando</td>
+    </tr>
+    <tr>
+      <td>8</td>
+      <td>RAM suficiente (~100 MB libres)</td>
+      <td><span class="hl-box">free -m</span></td>
+      <td>MemAvailable ≥ 200 MB tras Oasis</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ═══ SYSTEMD ═══ -->
+<div class="cutout tilt-l">
+  <h3>Unidades systemd</h3>
+
+  <div class="step-title">rpi-webrtc.service</div>
+  <div class="cmd"><span class="comment"># /etc/systemd/system/rpi-webrtc.service</span>
+[Unit]
+Description=RPi-WebRTC Streamer
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/rpi-webrtc/rws \
+  --config /opt/rpi-webrtc/webrtc_streamer.conf
+Restart=on-failure
+RestartSec=5
+User=rpi-webrtc
+Group=video
+<span class="comment"># Acceso a GPU y cámara CSI</span>
+SupplementaryGroups=video
+DeviceAllow=/dev/vchiq rw
+DeviceAllow=/dev/video* rw
+
+<span class="comment"># Límites de recursos</span>
+MemoryMax=80M
+CPUQuota=30%
+
+[Install]
+WantedBy=multi-user.target</div>
+
+  <div class="step-title">Activar y arrancar</div>
+  <div class="cmd"><span class="prompt">sudo systemctl daemon-reload</span>
+<span class="prompt">sudo systemctl enable --now rpi-webrtc</span>
+<span class="prompt">sudo systemctl status rpi-webrtc</span></div>
+
+  <div class="tip">Oasis (que contiene media_proxy.js) ya tiene su propia unit. Configurar <b>After=rpi-webrtc.service</b> en la unit de Oasis para asegurar orden de arranque.</div>
+</div>
+
+<!-- ═══ DOCKER ═══ -->
+<div class="cutout">
+  <h3>Docker (alternativa)</h3>
+  <div class="warn">RPi-WebRTC necesita acceso directo a <b>/dev/vchiq</b> (GPU) y <b>/dev/video*</b> (cámara). En Docker requiere <code>--device</code> flags.</div>
+
+  <div class="cmd"><span class="comment"># docker-compose.yml (fragmento)</span>
+services:
+  rpi-webrtc:
+    image: rpi-webrtc-local:latest
+    devices:
+      - /dev/vchiq:/dev/vchiq
+      - /dev/video0:/dev/video0
+    ports:
+      - "127.0.0.1:8889:8889"
+    volumes:
+      - ./webrtc_streamer.conf:/opt/rpi-webrtc/webrtc_streamer.conf:ro
+    mem_limit: 80m
+    restart: unless-stopped</div>
+
+  <div class="tip">La imagen Docker hay que construirla localmente (cross-compile) o en CI. No hay imagen oficial en Docker Hub.</div>
+</div>
+
+<!-- ═══ FALLBACK STRATEGY ═══ -->
+<div class="cutout tilt-r">
+  <div class="tape tape-tl"></div>
+  <h3>☞ Estrategia de Fallback</h3>
+  <div class="key-concept">
+    RPi-WebRTC tiene riesgo de mantenimiento. El SNH debe poder <b>caer a Arq. 3</b> (go2rtc) sin re-diseño del frontend.
+  </div>
+
+<pre class="diagram" style="font-size:0.52rem;">
+  hardware_detect.js
+       │
+       ├─ CSI detectada + RPi-WebRTC disponible
+       │     → Arrancar RPi-WebRTC (:8889)
+       │     → media_proxy.js consume WebRTC → MJPEG/OGG
+       │     → GET /video, GET /audio (mismas rutas)
+       │
+       ├─ CSI detectada + RPi-WebRTC NO disponible
+       │     → Arrancar go2rtc (:1984) con v4l2
+       │     → Proxy go2rtc MJPEG → GET /video
+       │     → Mumble bridge → GET /audio
+       │     → (= Arq. 3, mismas rutas)
+       │
+       └─ USB detectada
+             → RPi-WebRTC descartado automáticamente
+             → Arrancar go2rtc/µStreamer
+             → (= Arq. 3 o Arq. 6)
+</pre>
+  <div class="tip">Las rutas HTTP <b>GET /video</b> y <b>GET /audio</b> son idénticas en todas las arquitecturas. El frontend (EJS templates) no necesita cambiar.</div>
+</div>
+
+<!-- ═══ MONITORING ═══ -->
+<div class="cutout">
+  <h3>Monitorización</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Métrica</th><th>Comando</th><th>Umbral alerta</th></tr>
+    <tr>
+      <td>RAM RPi-WebRTC</td>
+      <td><span class="hl-box">systemctl status rpi-webrtc | grep Memory</span></td>
+      <td>&gt; 60 MB</td>
+    </tr>
+    <tr>
+      <td>CPU total</td>
+      <td><span class="hl-box">top -bn1 | grep rws</span></td>
+      <td>&gt; 25%</td>
+    </tr>
+    <tr>
+      <td>ffmpeg decode CPU</td>
+      <td><span class="hl-box">top -bn1 | grep ffmpeg</span></td>
+      <td>&gt; 15%</td>
+    </tr>
+    <tr>
+      <td>Temperatura GPU</td>
+      <td><span class="hl-box">vcgencmd measure_temp</span></td>
+      <td>&gt; 70°C</td>
+    </tr>
+    <tr>
+      <td>WebRTC peers activos</td>
+      <td>GET http://localhost:8889/status (si soportado)</td>
+      <td>&gt; 2 simultáneos</td>
+    </tr>
+    <tr>
+      <td>Logs errores</td>
+      <td><span class="hl-box">journalctl -u rpi-webrtc --since "5 min ago" -p err</span></td>
+      <td>Cualquier error</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ═══ RESOURCE BUDGET ═══ -->
+<div class="cutout tilt-l">
+  <h3>Presupuesto de Recursos (RPi 3B, 1 GB)</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Proceso</th><th>RAM</th><th>CPU</th><th>Notas</th></tr>
+    <tr><td>Linux + Bookworm base</td><td>~150 MB</td><td>—</td><td>Kernel + systemd + base</td></tr>
+    <tr><td>Docker daemon</td><td>~50 MB</td><td>~2%</td><td>Si se usa Docker</td></tr>
+    <tr><td>Oasis (Node.js + SSB)</td><td>~200 MB</td><td>~5–10%</td><td>Incluye ssb-server</td></tr>
+    <tr><td><b>RPi-WebRTC</b></td><td><b>~40 MB</b></td><td><b>~15–20%</b></td><td>Encode HW + stack</td></tr>
+    <tr><td><b>media_proxy.js (ffmpeg)</b></td><td><b>~40–60 MB</b></td><td><b>~10%</b></td><td>Decode H.264→MJPEG</td></tr>
+    <tr><td>node-datachannel</td><td>~8 MB</td><td>~2%</td><td>Dentro de Oasis</td></tr>
+    <tr style="font-weight:bold;border-top:2px solid #111;">
+      <td>TOTAL</td><td>~490–510 MB</td><td>~35–45%</td><td>Quedan ~490 MB libres</td>
+    </tr>
+  </table>
+  <div class="warn">Es la arquitectura que <b>más RAM consume</b>. En 1 GB, queda margen justo. Si Oasis crece, considerar Arq. 6 (~10–20 MB media).</div>
+</div>
+
+<!-- ═══ KEYWORDS ═══ -->
+<div class="cutout" style="text-align:center;">
+  <span class="kw">systemd</span>
+  <span class="kw-inv">cross-compile</span>
+  <span class="kw">fallback</span>
+  <span class="kw-inv">hardware_detect.js</span>
+  <span class="kw">cgroups</span>
+  <span class="kw-inv">/dev/vchiq</span>
+  <span class="kw">MemoryMax</span>
+  <span class="kw-inv">Docker</span>
+</div>
+
+<footer class="footer">
+  SPEC · Deploy &amp; Ops · Arq. 5 · SSB-WebRTC · Solar Net Hub
+</footer>
+
+</body>
+</html>

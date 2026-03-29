@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ARQ. 2 — SOFTWARE SPEC POSTER</title>
+<link rel="stylesheet" href="poster-template/fanzine.css">
+</head>
+<body>
+
+<!-- ════════════ HEADER ════════════ -->
+<header class="header">
+  <div class="stamp">SOLAR NET HUB</div>
+  <h1>Arq. 2</h1>
+  <div class="sub">MediaMTX + rpicam (+ node-datachannel)</div>
+  <div class="sub2">Software Specification — RPi 3B — CSI Zero-Copy, Auto-Conversión, LAN + Remoto</div>
+  <div class="issue">web-rtc.md §2.2 Arq. 2 · web-rtc-ext.md EXT-5B</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ════════════ SPEC INDEX ════════════ -->
+<div class="cutout" style="text-align:center;">
+  <h3>☞ Deep-Dive Specs</h3>
+  <a class="deep-link" href="spec-arq2/mediamtx.html">MediaMTX — config YAML, protocolo auto-conv, rpicam nativo, hooks</a><br>
+  <a class="deep-link" href="spec-arq2/deploy.html">Deploy &amp; Ops — systemd, Docker, CSI vs USB config, fallback</a>
+</div>
+
+<!-- ════════════ STATS ════════════ -->
+<div class="stats-bar tilt-r">
+  <div class="stat"><span class="val">~15–30 MB</span><span class="lbl">RAM MediaMTX</span></div>
+  <div class="stat"><span class="val">~5%</span><span class="lbl">CPU (CSI HW)</span></div>
+  <div class="stat"><span class="val">13k ★</span><span class="lbl">GitHub</span></div>
+  <div class="stat"><span class="val">MIT</span><span class="lbl">Licencia</span></div>
+  <div class="stat"><span class="val">0</span><span class="lbl">JS en browser SNH</span></div>
+</div>
+
+<!-- ════════════ DIAGRAM ════════════ -->
+<div class="cutout diagram-wrap">
+  <div class="tape tape-tl"></div>
+  <div class="tape tape-tr"></div>
+  <h2>☞ Esquema de Arquitectura</h2>
+<pre class="diagram">
+ ┌──────────────────────────────────────────────────────────────────┐
+ │              RASPBERRY PI 3B  ·  SOLAR NET HUB                  │
+ │              BCM2837 · Cortex-A53 · VideoCore IV                │
+ │                                                                  │
+ │  ┌──────────┐  ribbon  ┌──────────────────┐                     │
+ │  │ 🎥 CAM   │─────────▷│ rpicam-vid       │                     │
+ │  │ CSI      │  zero-   │ H.264 HW encode  │                     │
+ │  └──────────┘  copy    │ (nativo, sin     │                     │
+ │                        │  ffmpeg)          │                     │
+ │                        └────────┬─────────┘                     │
+ │                                 │ RTSP                           │
+ │                        ┌────────┴──────────────────────┐        │
+ │                        │     MediaMTX       :8554      │        │
+ │                        │                               │        │
+ │                        │  Auto-conversión:             │        │
+ │                        │    RTSP → HLS (:8888)         │        │
+ │                        │    RTSP → WebRTC (:8889)      │        │
+ │                        │    RTSP → RTMP (:1935)        │        │
+ │                        │    Hooks → Node.js            │        │
+ │                        └────────┬──────────────────────┘        │
+ │                                 │ localhost                      │
+ │  ┌──────────────────────────────┴────────────────────────────┐  │
+ │  │  OASIS  :3000   (Node.js · SSB · cero JS en browser)     │  │
+ │  │                                                           │  │
+ │  │   GET /video     ──▷ proxy MediaMTX HLS                  │  │
+ │  │   GET /snapshot  ──▷ proxy MediaMTX JPEG                 │  │
+ │  │                                                           │  │
+ │  │   HTML: &lt;video src="/video.m3u8"&gt; (HLS sin JS en Safari) │  │
+ │  │   Alt:  &lt;img src="/snapshot"&gt; + refresh meta              │  │
+ │  │                                                           │  │
+ │  │   ┌─────────────────────────────────────┐                 │  │
+ │  │   │ node-datachannel (P2P DataChannels) │                 │  │
+ │  │   │ texto · archivos · señalización     │                 │  │
+ │  │   └─────────────────────────────────────┘                 │  │
+ │  └───────────────────────────────────────────────────────────┘  │
+ └──────────────────────────────────────────────────────────────────┘
+          │                │                │
+          ▼                ▼                ▼
+   ┌────────────┐  ┌─────────────┐  ┌────────────┐
+   │ 📺 BROWSER │  │ 📡 PEER     │  │ 🌐 REMOTE │
+   │ LAN (no JS)│  │ P2P data   │  │ HLS viewer │
+   │ &lt;video&gt;HLS │  │ node-dc    │  │ &lt;video&gt;HLS │
+   │ ó snapshot │  │ text/file  │  │ via Tor OK │
+   └────────────┘  └─────────────┘  └────────────┘
+</pre>
+</div>
+
+<!-- ════════════ CALLOUT ════════════ -->
+<div class="callout tilt-l">
+  ★ rpicam-vid zero-copy → RTSP → auto-conversión a HLS/WebRTC/RTMP — sin ffmpeg para CSI ★
+</div>
+
+<!-- ════════════ KEY CONCEPTS ════════════ -->
+<div class="cutout">
+  <h3>Key Concepts</h3>
+
+  <details>
+    <summary>¿Qué es MediaMTX?</summary>
+    <div class="detail-body">
+      <div class="key-concept"><b>MediaMTX</b> (antes rtsp-simple-server) es un router de protocolos media en Go. Su superpoder: <b>auto-conversión</b>. Publicas un stream RTSP y automáticamente está disponible como HLS, WebRTC, RTMP, SRT — sin config adicional. ~20 MB binario, 13k ★ en GitHub, muy activo.</div>
+    </div>
+  </details>
+
+  <details>
+    <summary>¿Por qué es óptima para CSI?</summary>
+    <div class="detail-body">
+      <div class="key-concept">MediaMTX soporta <b>rpiCamera</b> como fuente nativa: accede directamente a <code>rpicam-vid</code> para obtener H.264 del encoder HW del VideoCore sin pasar por V4L2 ni ffmpeg. <b>Zero-copy</b> del GPU al stream RTSP. En RPi 3B, esto significa ~5% CPU vs ~15–20% con ffmpeg.</div>
+      <div class="tip">go2rtc también captura V4L2 directo, pero pasa por la capa V4L2 del kernel (con copia de buffers). MediaMTX con rpicam nativo salta V4L2 completamente.</div>
+    </div>
+  </details>
+
+  <details>
+    <summary>El problema con USB</summary>
+    <div class="detail-body">
+      <div class="warn">MediaMTX <b>no lee V4L2/UVC directo</b> para cámaras USB. Necesita un proceso ffmpeg externo que capture de V4L2, transcodifique a H.264, y publique por RTSP local. Esto anula la ventaja de CPU sobre go2rtc (que sí captura V4L2 directamente).</div>
+      <div class="key-concept"><b>Veredicto</b>: MediaMTX es <b>óptima para CSI</b> y <b>subóptima para USB</b>. Si necesitas soporte USB, go2rtc (<a href="poster-arq3.html">Arq. 3</a>) es más equilibrada.</div>
+    </div>
+  </details>
+
+  <details>
+    <summary>Audio: la pieza pendiente</summary>
+    <div class="detail-body">
+      <div class="key-concept">MediaMTX <b>no captura audio ALSA directamente</b> (a diferencia de go2rtc). El audio necesita un proceso ffmpeg aparte que capture ALSA y publique por RTSP, o bien usar <b>Mumble</b> (como en Arq. 3) para audio bidireccional independiente.</div>
+      <div class="tip">Para audio bidireccional + Tor: combinar MediaMTX (vídeo) + Mumble (audio) = variante híbrida de Arq. 3 con mejor eficiencia CSI.</div>
+    </div>
+  </details>
+
+  <details>
+    <summary>Hooks: comunicación con Node.js</summary>
+    <div class="detail-body">
+      <div class="key-concept">MediaMTX ejecuta comandos al conectar/desconectar un lector. Esto permite notificar a Oasis sin polling:</div>
+      <div class="cmd"><span class="comment"># mediamtx.yml (fragmento hooks)</span>
+paths:
+  solar-cam:
+    runOnReady: curl http://localhost:3000/hook/stream-ready
+    runOnNotReady: curl http://localhost:3000/hook/stream-stopped
+    runOnRead: curl http://localhost:3000/hook/viewer-connected
+    runOnUnread: curl http://localhost:3000/hook/viewer-disconnected</div>
+    </div>
+  </details>
+</div>
+
+<!-- ════════════ TWO COLUMNS ════════════ -->
+<div class="cols">
+
+  <div class="col">
+    <div class="cutout tilt-l">
+      <div class="tape tape-tr"></div>
+      <h3>Componentes</h3>
+
+      <div class="card">
+        <div class="card-title">MediaMTX</div>
+        <div class="card-port">:8554 (RTSP) · :8888 (HLS) · :8889 (WebRTC)</div>
+        <div class="card-body">
+          Lenguaje: <b>Go</b> (binario estático ~20 MB)<br>
+          Repo: bluenviron/mediamtx<br>
+          RAM: <b>~15–30 MB</b><br>
+          Entrada: RTSP, RTMP, HLS, WebRTC, SRT, <b>rpicam nativo</b><br>
+          Salida: RTSP, RTMP, HLS, WebRTC, SRT, MJPEG snapshots<br>
+          Auto-conversión: ✔ entre todos los protocolos<br>
+          Auth: internal / HTTP / JWT<br>
+          Config: <span class="hl-box">mediamtx.yml</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">rpicam-vid</div>
+        <div class="card-port">—</div>
+        <div class="card-body">
+          Herramienta nativa de captura CSI de Raspberry Pi<br>
+          Accede al encoder H.264 HW del VideoCore IV<br>
+          Zero-copy: GPU → buffer → RTSP directo<br>
+          Solo cámaras CSI (OV5647, IMX219, IMX477…)
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">node-datachannel</div>
+        <div class="card-port">P2P</div>
+        <div class="card-body">
+          DataChannels WebRTC: texto, archivos<br>
+          Señalización SDP/ICE vía SSB<br>
+          Corre dentro de Oasis (Node.js)<br>
+          No transporta audio ni vídeo
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="cutout tilt-r">
+      <div class="tape tape-tl"></div>
+      <h3>Ficha Rápida</h3>
+      <table class="tbl">
+        <tr><th>Propiedad</th><th>Estado</th></tr>
+        <tr><td>Cero JS en browser LAN</td><td class="check">✔ (HLS/snapshot)</td></tr>
+        <tr><td>Cámara CSI</td><td class="check"><b>✔ Zero-copy HW</b></td></tr>
+        <tr><td>Cámara USB</td><td class="check">⚠️ Necesita ffmpeg</td></tr>
+        <tr><td>Audio captura</td><td class="check">⚠️ Necesita ffmpeg→RTSP</td></tr>
+        <tr><td>Audio bidireccional</td><td class="check">✘ (no nativo)</td></tr>
+        <tr><td>Funciona sobre Tor</td><td class="check">⚠️ HLS sí; WebRTC no</td></tr>
+        <tr><td>Auto-conversión</td><td class="check"><b>✔</b> RTSP↔HLS↔WebRTC↔RTMP</td></tr>
+        <tr><td>HLS para remoto</td><td class="check"><b>✔</b></td></tr>
+        <tr><td>WebRTC (WHEP)</td><td class="check">✔</td></tr>
+        <tr><td>RTSP output</td><td class="check">✔</td></tr>
+        <tr><td>Hooks a Node.js</td><td class="check">✔ on_connect/disconnect</td></tr>
+        <tr><td>DataChannels P2P</td><td class="check">✔ (node-datachannel)</td></tr>
+        <tr><td>RAM nuevos procesos</td><td class="check"><b>~15–30 MB</b></td></tr>
+      </table>
+    </div>
+
+    <div class="cutout tilt-l2" style="margin-top:12px;">
+      <h3>¿Cuándo Elegir Arq. 2?</h3>
+      <div style="font-size:0.7rem;">
+        <b>✔ SÍ cuando:</b><br>
+        · Usas <b>cámara CSI</b> y quieres máxima eficiencia HW<br>
+        · Necesitas <b>auto-conversión</b> multi-protocolo<br>
+        · Quieres HLS nativo sin config adicional<br>
+        · No necesitas audio bidireccional nativo<br>
+        · El peer remoto usa HLS (Tor-compatible)<br><br>
+        <b>✘ NO cuando:</b><br>
+        · Usas <b>cámara USB</b> (ffmpeg anula la ventaja)<br>
+        → Usa <a href="poster-arq3.html">Arq. 3</a> (go2rtc, V4L2 directo)<br>
+        · Necesitas <b>audio bidireccional</b><br>
+        → Combinar con Mumble, o usar <a href="poster-arq3.html">Arq. 3</a><br>
+        · Quieres <b>MJPEG streaming</b> continuo<br>
+        → MediaMTX sirve snapshots, no MJPEG stream. Usa go2rtc o <a href="poster-arq6.html">Arq. 6</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════ CSI vs USB ════════════ -->
+<div class="cutout">
+  <div class="tape tape-tl"></div>
+  <h3>☞ MediaMTX: CSI vs USB</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th></th><th>MediaMTX + CSI</th><th>MediaMTX + USB</th></tr>
+    <tr><td><b>Fuente</b></td><td><code>rpiCamera</code> nativo (zero-copy)</td><td>ffmpeg exec → RTSP local</td></tr>
+    <tr><td><b>ffmpeg necesario</b></td><td>❌ No</td><td>✔ Sí (decode MJPEG + encode H.264)</td></tr>
+    <tr><td><b>CPU</b></td><td>~5% (HW encode directo)</td><td>~15–20% (ffmpeg transcoding)</td></tr>
+    <tr><td><b>Config</b></td><td>10 líneas YAML</td><td>10 líneas YAML + ffmpeg command</td></tr>
+    <tr><td><b>Auto-conversión</b></td><td>✔ RTSP→HLS→WebRTC automática</td><td>✔ Igual (una vez el RTSP existe)</td></tr>
+    <tr><td><b>Docker devices</b></td><td>/dev/video0 + /dev/vchiq</td><td>/dev/video0</td></tr>
+  </table>
+
+  <div class="cols" style="margin-top:10px;">
+    <div class="col">
+      <div class="step-title">mediamtx.yml — CSI</div>
+      <div class="cmd"><span class="comment"># Fuente nativa rpicam (zero-copy)</span>
+paths:
+  solar-cam:
+    source: rpiCamera
+    rpiCameraWidth: 1280
+    rpiCameraHeight: 720
+    rpiCameraFPS: 25
+    rpiCameraCodec: h264
+    rpiCameraProfile: baseline
+    rpiCameraLevel: "3.1"
+    rpiCameraBitrate: 1000000</div>
+    </div>
+    <div class="col">
+      <div class="step-title">mediamtx.yml — USB</div>
+      <div class="cmd"><span class="comment"># USB requiere ffmpeg como fuente</span>
+paths:
+  solar-cam:
+    runOnInit: &gt;
+      ffmpeg -f v4l2
+      -input_format mjpeg
+      -video_size 1280x720
+      -framerate 25
+      -i /dev/video0
+      -c:v h264_v4l2m2m -b:v 1M
+      -f rtsp rtsp://localhost:$RTSP_PORT/$MTX_PATH
+    runOnInitRestart: yes</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════ COMPARATIVA ════════════ -->
+<div class="cutout tilt-r">
+  <div class="tape tape-tl"></div>
+  <h3>MediaMTX vs. go2rtc — Comparativa Directa</h3>
+  <table class="tbl" style="font-size:0.55rem;">
+    <tr><th>Criterio</th><th>MediaMTX</th><th>go2rtc</th></tr>
+    <tr><td><b>CSI zero-copy</b></td><td><b>✔ rpicam nativo</b></td><td>⚠️ V4L2 (con copia)</td></tr>
+    <tr><td><b>USB directo</b></td><td>✘ Necesita ffmpeg</td><td><b>✔ V4L2 directo</b></td></tr>
+    <tr><td><b>Audio ALSA</b></td><td>✘ Necesita ffmpeg→RTSP</td><td><b>✔ ALSA directo</b></td></tr>
+    <tr><td><b>MJPEG stream</b></td><td>⚠️ Solo snapshots</td><td><b>✔ MJPEG continuo</b></td></tr>
+    <tr><td><b>HLS</b></td><td>✔ Auto-conversión</td><td>✔ Nativo</td></tr>
+    <tr><td><b>WebRTC (WHEP)</b></td><td>✔</td><td>✔</td></tr>
+    <tr><td><b>RTSP</b></td><td>✔ (protocolo base)</td><td>✔</td></tr>
+    <tr><td><b>RTMP</b></td><td>✔</td><td>✘</td></tr>
+    <tr><td><b>SRT</b></td><td>✔</td><td>✘</td></tr>
+    <tr><td><b>Auth</b></td><td>✔ internal/HTTP/JWT</td><td>Básica (API key)</td></tr>
+    <tr><td><b>Hooks</b></td><td>✔ on_connect/disconnect</td><td>✘</td></tr>
+    <tr><td><b>RAM</b></td><td>~15–30 MB</td><td>~20–40 MB</td></tr>
+    <tr><td><b>CPU (CSI)</b></td><td><b>~5%</b></td><td>~5–10%</td></tr>
+    <tr><td><b>CPU (USB)</b></td><td>~15–20% (ffmpeg)</td><td><b>~10–20%</b></td></tr>
+    <tr><td><b>Binario</b></td><td>~20 MB</td><td>~15 MB</td></tr>
+    <tr><td><b>GitHub ★</b></td><td>~13k</td><td>~7k</td></tr>
+  </table>
+  <div class="key-concept" style="margin-top:8px;">
+    <b>Resumen</b>: MediaMTX gana en CSI (zero-copy) y en protocolos extra (RTMP, SRT, hooks). go2rtc gana en USB, audio ALSA, y MJPEG streaming. Para el SNH, la elección depende de la cámara.
+  </div>
+</div>
+
+<!-- ════════════ PROTOCOL AUTO-CONVERSION ════════════ -->
+<div class="cutout">
+  <div class="tape tape-tr"></div>
+  <h3>Auto-Conversión de Protocolos</h3>
+<pre class="diagram" style="font-size:0.55rem;">
+                              MediaMTX
+                         ┌─────────────────┐
+                         │                 │
+   rpicam-vid ──RTSP──▷  │  RTSP :8554     │
+                         │    │            │
+                         │    ├──▷ HLS    :8888   →  &lt;video src=".m3u8"&gt;
+                         │    ├──▷ WebRTC :8889   →  peers con JS
+                         │    ├──▷ RTMP   :1935   →  re-stream externo
+                         │    ├──▷ SRT    :8890   →  low-latency link
+                         │    └──▷ API    :9997   →  control / status
+                         │                 │
+                         └─────────────────┘
+
+  ★ Publicas UNA fuente RTSP → sale en TODOS los formatos ★
+  ★ Sin config adicional por protocolo                     ★
+</pre>
+</div>
+
+<!-- ════════════ AUDIO OPTIONS ════════════ -->
+<div class="cutout tilt-l">
+  <div class="tape tape-tl"></div>
+  <h3>Audio: Opciones para Arq. 2</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Opción</th><th>Descripción</th><th>Bid.</th><th>Tor</th><th>Complejidad</th></tr>
+    <tr>
+      <td><b>ffmpeg→RTSP</b></td>
+      <td>ffmpeg captura ALSA, publica RTSP en MediaMTX. Auto-conv a HLS audio.</td>
+      <td>✘</td>
+      <td>⚠️</td>
+      <td>Baja</td>
+    </tr>
+    <tr>
+      <td><b>Mumble</b></td>
+      <td>murmurd (ya instalado) + bridge HTTP. Audio bidireccional, Tor-compatible.</td>
+      <td><b>✔</b></td>
+      <td><b>✔</b></td>
+      <td>Media</td>
+    </tr>
+    <tr>
+      <td><b>Sin audio</b></td>
+      <td>Solo vídeo. Válido para vigilancia/monitorización.</td>
+      <td>✘</td>
+      <td>N/A</td>
+      <td>Ninguna</td>
+    </tr>
+  </table>
+  <div class="tip">La combinación <b>MediaMTX (vídeo CSI) + Mumble (audio)</b> es una variante híbrida que toma lo mejor de Arq. 2 y Arq. 3.</div>
+</div>
+
+<!-- ════════════ RISK TABLE ════════════ -->
+<div class="cutout tilt-r2">
+  <div class="tape tape-tr"></div>
+  <h3>Riesgos &amp; Mitigaciones</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Riesgo</th><th>Prob.</th><th>Impacto</th><th>Mitigación</th></tr>
+    <tr>
+      <td>USB cam descarta ventaja CSI</td>
+      <td>Media</td>
+      <td>Medio</td>
+      <td>hardware_detect.js → redirigir a Arq. 3 (go2rtc) para USB</td>
+    </tr>
+    <tr>
+      <td>Sin MJPEG stream continuo</td>
+      <td>Segura</td>
+      <td>Medio</td>
+      <td>Usar snapshots + meta refresh, o proxy ffmpeg RTSP→MJPEG</td>
+    </tr>
+    <tr>
+      <td>Audio requiere componente extra</td>
+      <td>Segura</td>
+      <td>Bajo</td>
+      <td>Combinar con Mumble (ya instalado) para audio bidireccional</td>
+    </tr>
+    <tr>
+      <td>rpicam API cambia en nuevas distros</td>
+      <td>Baja</td>
+      <td>Medio</td>
+      <td>MediaMTX se actualiza regularmente (~13k ★, releases frecuentes)</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ════════════ KEYWORDS ════════════ -->
+<div class="cutout" style="text-align:center;">
+  <span class="kw">MediaMTX</span>
+  <span class="kw-inv">rpicam-vid</span>
+  <span class="kw">zero-copy</span>
+  <span class="kw-inv">RTSP</span>
+  <span class="kw">HLS</span>
+  <span class="kw-inv">auto-conversión</span>
+  <span class="kw">CSI</span>
+  <span class="kw-inv">hooks</span>
+  <span class="kw">Pion</span>
+  <span class="kw-inv">:8554</span>
+  <span class="kw">Go</span>
+  <span class="kw-inv">SRT</span>
+</div>
+
+<footer class="footer">
+  Arq. 2 · MediaMTX + rpicam + node-datachannel · SSB-WebRTC · Solar Net Hub ·
+  Fuente: web-rtc.md §2.2 Arq. 2 + web-rtc-ext.md EXT-5B
+</footer>
+
+</body>
+</html>

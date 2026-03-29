@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SPEC · Media Proxy — WebRTC→HTTP</title>
+<link rel="stylesheet" href="../poster-template/fanzine.css">
+</head>
+<body>
+
+<div class="nav-back">
+  <a href="../poster-arq5.html">◀ VOLVER AL POSTER</a> · SPEC · Media Proxy
+</div>
+
+<header class="header" style="padding:18px 10px 14px;">
+  <div class="stamp">OASIS</div>
+  <h1 style="font-size:1.8rem;">Media Proxy</h1>
+  <div class="sub">Consumer WebRTC → MJPEG/OGG — sirve media sin JS al browser del SNH</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ═══ IDENTITY ═══ -->
+<div class="cutout">
+  <h3>Identidad del Componente</h3>
+  <table class="tbl">
+    <tr><th>Campo</th><th>Valor</th></tr>
+    <tr><td>Fichero</td><td><span class="hl-box">media_proxy.js</span> (~200 líneas)</td></tr>
+    <tr><td>Corre dentro de</td><td>Oasis (Node.js :3000)</td></tr>
+    <tr><td>Dependencia principal</td><td>node-datachannel (consumer WebRTC)</td></tr>
+    <tr><td>Dependencia decode</td><td>ffmpeg (pipe: H.264→MJPEG, Opus→OGG)</td></tr>
+    <tr><td>RAM adicional</td><td>~40–60 MB (ffmpeg decode + buffers)</td></tr>
+    <tr><td>Entrada</td><td>WebRTC tracks desde RPi-WebRTC (localhost:8889)</td></tr>
+    <tr><td>Salida</td><td>GET /video (MJPEG), GET /audio (OGG)</td></tr>
+  </table>
+</div>
+
+<!-- ═══ KEY CONCEPT ═══ -->
+<div class="cutout tilt-r">
+  <h3>Key Concept</h3>
+  <div class="key-concept">
+    RPi-WebRTC sirve WebRTC nativo → el browser necesita JS. El proxy <b>consume</b> ese stream WebRTC dentro de Node.js (vía node-datachannel) y <b>reconvierte</b> a MJPEG/OGG servido como HTTP puro. Así el browser del SNH recibe <code>&lt;img src="/video"&gt;</code> y <code>&lt;audio src="/audio"&gt;</code> sin JS.
+  </div>
+  <div class="tip">Es el mismo principio que Arq. 3 (go2rtc sirve MJPEG/HLS sin JS), pero aquí la fuente es WebRTC nativo en vez de V4L2 directo.</div>
+</div>
+
+<!-- ═══ PIPELINE ═══ -->
+<div class="cutout diagram-wrap">
+  <h3>Pipeline de Conversión</h3>
+<pre class="diagram" style="font-size:0.52rem;">
+  RPi-WebRTC (:8889)
+       │
+       │  WebRTC: H.264 RTP + Opus RTP
+       │
+  ┌────┴──────────────────────────────── media_proxy.js ──────────┐
+  │                                                                │
+  │  node-datachannel                                              │
+  │  ├─ PeerConnection (localhost)                                 │
+  │  ├─ onTrack('video') ──▷ ffmpeg -f h264 -i pipe:              │
+  │  │                          -f mjpeg -q:v 5 pipe:1             │
+  │  │                       ──▷ HTTP chunked → GET /video         │
+  │  │                                                             │
+  │  └─ onTrack('audio') ──▷ ffmpeg -f opus -i pipe:              │
+  │                             -c:a libvorbis -f ogg pipe:1       │
+  │                          ──▷ HTTP chunked → GET /audio         │
+  │                                                                │
+  │  onDataChannel ──▷ relay a webrtc_model.js (chat/files)        │
+  └────────────────────────────────────────────────────────────────┘
+</pre>
+</div>
+
+<!-- ═══ ROUTES ═══ -->
+<div class="cutout tilt-l">
+  <h3>Rutas HTTP (dentro de Oasis)</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Ruta</th><th>Método</th><th>Content-Type</th><th>Descripción</th></tr>
+    <tr>
+      <td>/video</td>
+      <td>GET</td>
+      <td>multipart/x-mixed-replace (MJPEG)</td>
+      <td>Stream MJPEG continuo, ffmpeg decode H.264→MJPEG</td>
+    </tr>
+    <tr>
+      <td>/audio</td>
+      <td>GET</td>
+      <td>audio/ogg</td>
+      <td>Stream OGG/Vorbis, ffmpeg decode Opus→OGG</td>
+    </tr>
+    <tr>
+      <td>/snapshot</td>
+      <td>GET</td>
+      <td>image/jpeg</td>
+      <td>Último frame JPEG capturado</td>
+    </tr>
+  </table>
+
+  <div class="key-concept">
+    Los templates EJS de Oasis renderizan HTML con:
+  </div>
+  <div class="cmd">&lt;img src="/video" alt="cam"&gt;
+&lt;audio src="/audio" autoplay controls&gt;&lt;/audio&gt;</div>
+</div>
+
+<!-- ═══ HANDSHAKE ═══ -->
+<div class="cutout">
+  <h3>Handshake: Proxy ↔ RPi-WebRTC</h3>
+  <div class="step-title">1. Crear PeerConnection</div>
+  <div class="cmd"><span class="comment">// media_proxy.js — inicialización</span>
+const { PeerConnection } = require('node-datachannel');
+const pc = new PeerConnection('proxy', { iceServers: [] });</div>
+
+  <div class="step-title">2. Intercambiar SDP con RPi-WebRTC</div>
+  <div class="cmd"><span class="comment">// Crear offer y enviar a RPi-WebRTC HTTP API</span>
+const offer = pc.createOffer();
+pc.setLocalDescription(offer);
+<span class="comment">// POST a localhost:8889/offer</span>
+const resp = await fetch('http://127.0.0.1:8889/offer', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/sdp' },
+  body: offer.sdp
+});
+const answerSdp = await resp.text();
+pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });</div>
+
+  <div class="step-title">3. Recibir tracks y decodificar</div>
+  <div class="cmd"><span class="comment">// Pipe tracks a ffmpeg para conversión</span>
+pc.onTrack((track) =&gt; {
+  if (track.kind === 'video') {
+    spawnFfmpeg(track, 'mjpeg', videoOutputStream);
+  } else if (track.kind === 'audio') {
+    spawnFfmpeg(track, 'ogg', audioOutputStream);
+  }
+});</div>
+
+  <div class="warn">El handshake es en <b>localhost</b> — no necesita STUN/TURN. ICE candidates serán solo host candidates (127.0.0.1).</div>
+</div>
+
+<!-- ═══ FFMPEG COMMANDS ═══ -->
+<div class="cutout tilt-r">
+  <h3>Comandos ffmpeg Internos</h3>
+
+  <div class="step-title">Vídeo: H.264 → MJPEG</div>
+  <div class="cmd"><span class="prompt">ffmpeg -f h264 -i pipe:0 \</span>
+  -f mjpeg -q:v 5 -r 15 pipe:1</div>
+  <div class="tip">-q:v 5 balancea calidad/BW. -r 15 limita fps para ahorrar CPU.</div>
+
+  <div class="step-title">Audio: Opus → OGG/Vorbis</div>
+  <div class="cmd"><span class="prompt">ffmpeg -f opus -i pipe:0 \</span>
+  -c:a libvorbis -q:a 3 -f ogg pipe:1</div>
+
+  <div class="step-title">Snapshot: H.264 → JPEG (un frame)</div>
+  <div class="cmd"><span class="prompt">ffmpeg -f h264 -i pipe:0 \</span>
+  -frames:v 1 -f image2 pipe:1</div>
+</div>
+
+<!-- ═══ CSP / SECURITY ═══ -->
+<div class="cutout">
+  <h3>CSP &amp; Seguridad</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Header</th><th>Valor</th><th>Motivo</th></tr>
+    <tr>
+      <td>Content-Security-Policy</td>
+      <td>img-src 'self'; media-src 'self'</td>
+      <td>Solo carga media de Oasis mismo</td>
+    </tr>
+    <tr>
+      <td>X-Content-Type-Options</td>
+      <td>nosniff</td>
+      <td>Prevenir MIME sniffing</td>
+    </tr>
+    <tr>
+      <td>Cache-Control</td>
+      <td>no-store</td>
+      <td>Stream en vivo, no cachear</td>
+    </tr>
+  </table>
+  <div class="key-concept">
+    El proxy escucha <b>solo en localhost</b> (127.0.0.1). RPi-WebRTC también debe bindearse a localhost. Las rutas /video y /audio se exponen a través de Oasis (:3000), que ya gestiona autenticación SSB.
+  </div>
+</div>
+
+<!-- ═══ TROUBLESHOOTING ═══ -->
+<div class="cutout tilt-l">
+  <h3>Troubleshooting</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Síntoma</th><th>Causa</th><th>Fix</th></tr>
+    <tr>
+      <td>GET /video devuelve 502</td>
+      <td>RPi-WebRTC no está corriendo</td>
+      <td>Verificar <span class="hl-box">systemctl status rpi-webrtc</span></td>
+    </tr>
+    <tr>
+      <td>Vídeo negro / frames corruptos</td>
+      <td>ffmpeg no recibe H.264 válido</td>
+      <td>Verificar que RPi-WebRTC negoció H.264 (no VP8/VP9)</td>
+    </tr>
+    <tr>
+      <td>Audio entrecortado</td>
+      <td>Buffer underrun en pipe</td>
+      <td>Aumentar buffer size en spawn_ffmpeg. Verificar CPU < 80%</td>
+    </tr>
+    <tr>
+      <td>PeerConnection falla (ICE failed)</td>
+      <td>RPi-WebRTC rechaza offer</td>
+      <td>Verificar formato SDP. Probar con browser estándar primero</td>
+    </tr>
+    <tr>
+      <td>Alta CPU en ffmpeg decode</td>
+      <td>H.264 High profile = CPU-intensive decode</td>
+      <td>Configurar RPi-WebRTC para Baseline profile. Reducir resolución</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ═══ KEYWORDS ═══ -->
+<div class="cutout" style="text-align:center;">
+  <span class="kw">media_proxy.js</span>
+  <span class="kw-inv">node-datachannel</span>
+  <span class="kw">ffmpeg pipe</span>
+  <span class="kw-inv">MJPEG</span>
+  <span class="kw">OGG</span>
+  <span class="kw-inv">H.264→MJPEG</span>
+  <span class="kw">Opus→OGG</span>
+  <span class="kw-inv">GET /video</span>
+</div>
+
+<footer class="footer">
+  SPEC · Media Proxy · Arq. 5 · SSB-WebRTC · Solar Net Hub
+</footer>
+
+</body>
+</html>

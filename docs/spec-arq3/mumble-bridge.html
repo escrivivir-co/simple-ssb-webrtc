@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SPEC · Mumble Audio Bridge — Arq. 3</title>
+<link rel="stylesheet" href="../poster-template/fanzine.css">
+</head>
+<body>
+
+<div class="nav-back">
+  <a href="../poster-arq3.html">◀ VOLVER AL POSTER</a> · SPEC · MUMBLE BRIDGE
+</div>
+
+<header class="header" style="padding:18px 10px 14px;">
+  <div class="stamp">:64738</div>
+  <h1 style="font-size:1.8rem;">Mumble Bridge</h1>
+  <div class="sub">Audio bidireccional → &lt;audio&gt; en browser</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ═══ PIPELINE ═══ -->
+<div class="cutout">
+  <h3>Pipeline Completo</h3>
+<pre class="diagram">
+ MIC (ALSA)                                         BROWSER (sin JS)
+     │                                                    ▲
+     ▼                                                    │
+ ┌──────────┐    Opus     ┌────────────┐   OGG/HTTP  ┌───┴──────┐
+ │ murmurd  │◀═══════════▷│ gumble bot │────────────▷│ &lt;audio&gt;  │
+ │ :64738   │  (Mumble    │  ↓ PCM     │  chunked    │ autoplay │
+ │          │   protocol) │  ffmpeg    │  transfer   │          │
+ └──────────┘             └────────────┘             └──────────┘
+                                │
+                          Oasis :3000
+                          GET /audio
+</pre>
+</div>
+
+<!-- ═══ KEY CONCEPT ═══ -->
+<div class="cutout tilt-r">
+  <h3>Key Concept: ¿Por Qué Mumble y No go2rtc ALSA?</h3>
+  <div class="key-concept">
+    go2rtc SÍ captura ALSA directamente y puede servir audio. Pero <b>no es bidireccional</b> — solo downstream. Mumble = full-duplex + ya instalado + Tor (TCP tunnel). Usar Mumble para audio es la decisión correcta incluso cuando go2rtc está disponible.
+  </div>
+
+  <table class="tbl" style="margin-top:8px;">
+    <tr><th>Opción</th><th>Bidireccional</th><th>Tor</th><th>RAM extra</th><th>Ya instalado</th></tr>
+    <tr><td><b>Mumble (elegida)</b></td><td><b>✔ nativo</b></td><td><b>✔</b></td><td><b>+0 MB</b></td><td><b>✔</b></td></tr>
+    <tr><td>go2rtc ALSA</td><td>✘ solo send</td><td>⚠️</td><td>+0 (ya corre)</td><td>✔</td></tr>
+    <tr><td>ffmpeg ALSA→OGG</td><td>✘ solo send</td><td>✔</td><td>~15 MB</td><td>✘</td></tr>
+  </table>
+</div>
+
+<!-- ═══ ESTRATEGIAS DE BRIDGE ═══ -->
+<div class="cutout">
+  <h3>3 Estrategias para Bridge Mumble → Browser</h3>
+  <table class="tbl">
+    <tr><th></th><th>3A: Bridge HTTP ★</th><th>3B: mumble-web</th><th>3C: Cliente nativo</th></tr>
+    <tr><td><b>JS en browser</b></td><td>✘ No</td><td>✔ Sí (viola restricción)</td><td>✘ No</td></tr>
+    <tr><td><b>Apps necesarias</b></td><td>Solo navegador</td><td>Solo navegador</td><td>Navegador + Mumble app</td></tr>
+    <tr><td><b>Código nuevo</b></td><td>~100 lín bridge</td><td>Instalar mumble-web + proxy</td><td>~10 lín (URL mumble://)</td></tr>
+    <tr><td><b>Latencia audio</b></td><td>~200 ms</td><td>~50 ms (WebRTC)</td><td>~20 ms (UDP nativo)</td></tr>
+    <tr><td><b>Bidireccional</b></td><td>⚠️ Complejo</td><td>✔ Nativo</td><td>✔ Nativo</td></tr>
+    <tr><td><b>Tor</b></td><td>✔</td><td>⚠️ (WebRTC→TURN)</td><td>✔ (TCP tunnel)</td></tr>
+  </table>
+  <div class="key-concept"><b>Elegida: 3A</b> (bridge HTTP) para la UI unificada del SNH + <b>3C</b> (cliente nativo) como experiencia premium para el peer remoto. Ambas son compatibles simultáneamente.</div>
+</div>
+
+<!-- ═══ BRIDGE IMPLEMENTATION ═══ -->
+<div class="cutout">
+  <h3>Implementación del Bridge (Estrategia 3A)</h3>
+
+  <div style="font-size:0.72rem;font-weight:bold;margin-bottom:4px;">Recomendada: gumble (Go) → ffmpeg pipe</div>
+  <div class="cmd"><span class="comment"># Bot gumble captura audio del canal → stdout PCM 16-bit 48kHz mono</span>
+<span class="comment"># ffmpeg re-codifica a OGG/Opus para streaming HTTP</span>
+
+<span class="prompt">mumble-audio-bridge --server localhost:64738 --channel "WebRTC" \</span>
+  | ffmpeg -f s16le -ar 48000 -ac 1 -i pipe:0 \
+           -c:a libopus -application voip -b:a 32k \
+           -f ogg pipe:1 \
+  | serve-as-http --port 3001 --content-type "audio/ogg"</div>
+
+  <div class="tip"><b>gumble</b> (Go, github.com/layeh/gumble) se compila como binario estático ARM64 (~5 MB). Conecta a murmurd, captura el audio mezclado del canal, y lo escribe a stdout como PCM raw. No necesita runtime.</div>
+
+  <div style="font-size:0.72rem;font-weight:bold;margin:10px 0 4px;">Oasis route (/audio)</div>
+  <div class="cmd"><span class="comment">// Endpoint HTTP mínimo (~30 líneas en Node.js/Koa)</span>
+app.get('/audio', (req, res) =&gt; {
+  res.writeHead(200, {
+    'Content-Type': 'audio/ogg',
+    'Transfer-Encoding': 'chunked',
+    'Cache-Control': 'no-store'
+  });
+  bridge.stdout.pipe(res);
+  req.on('close', () =&gt; bridge.stdout.unpipe(res));
+});</div>
+
+  <div style="font-size:0.72rem;font-weight:bold;margin:10px 0 4px;">Alternativa legacy: Node.js mumble-client</div>
+  <div class="cmd"><span class="comment">// node-mumble — ⚠️ no mantenido desde 2019</span>
+<span class="comment">// bindings nativos rompen con Node.js recientes</span>
+<span class="comment">// Solo referencia; preferir gumble (Go)</span>
+const mumble = require('mumble');
+mumble.connect('mumble://127.0.0.1:64738', (err, conn) =&gt; {
+  conn.authenticate('oasis-bridge');
+  conn.on('voice', (pcmBuffer) =&gt; { /* ... */ });
+});</div>
+
+  <div class="warn"><b>⚠️ ffmpeg NO tiene handler nativo mumble://</b> — el comando <code>ffmpeg -i mumble://...</code> NO funciona sin compilación custom. El pipeline correcto es: bot gumble → stdout PCM → pipe a ffmpeg.</div>
+</div>
+
+<!-- ═══ LEGITIMIDAD DEL PATRÓN ═══ -->
+<div class="cutout tilt-l">
+  <h3>Legitimidad: ¿Es Válido Usar murmurd con un Bot?</h3>
+  <div class="key-concept">
+    <b>Sí.</b> murmurd como bus de audio con un bot bridge es un patrón establecido, no un hack. El protocolo Mumble no distingue entre un cliente humano y un bot — esto es by design.
+  </div>
+  <table class="tbl" style="margin-top:8px;">
+    <tr><th>Precedente</th><th>Descripción</th></tr>
+    <tr><td><b>MumbleDJ</b></td><td>Bot Go que inyecta audio (música) en canales Mumble</td></tr>
+    <tr><td><b>piepan</b></td><td>Framework Lua para scripting de bots Mumble</td></tr>
+    <tr><td><b>barnard</b></td><td>Cliente Mumble CLI en Go (usa gumble)</td></tr>
+  </table>
+  <div class="tip">murmurd ofrece mezclador, Opus, jitter buffer, AGC, cifrado — reimplementar esto sería absurdo cuando ya corre y consume +0 MB extra.</div>
+</div>
+
+<!-- ═══ BIDIRECTIONAL ═══ -->
+<div class="cutout tilt-l">
+  <h3>Audio Bidireccional</h3>
+  <table class="tbl">
+    <tr><th>Dirección</th><th>Mecanismo</th><th>Latencia</th><th>Requiere JS</th></tr>
+    <tr><td><b>SNH → Browser</b></td><td>murmurd → bridge → &lt;audio&gt;</td><td>~200 ms</td><td>✘</td></tr>
+    <tr><td><b>Peer → SNH (nativo)</b></td><td>Cliente Mumble nativo</td><td>~20 ms</td><td>✘</td></tr>
+    <tr><td><b>Peer → SNH (web)</b></td><td>getUserMedia → DataChannel → murmurd</td><td>~100 ms</td><td>✔</td></tr>
+  </table>
+
+  <div class="key-concept">Para audio upstream SIN JS: el peer usa un <b>cliente Mumble nativo</b> (Plumble Android, Mumble desktop). Bypasa el browser.</div>
+</div>
+
+<!-- ═══ LATENCY BUDGET ═══ -->
+<div class="cutout">
+  <h3>Budget de Latencia</h3>
+  <table class="tbl">
+    <tr><th>Etapa</th><th>Latencia</th></tr>
+    <tr><td>ALSA → murmurd</td><td>~10-20 ms</td></tr>
+    <tr><td>Opus encode</td><td>~5-10 ms</td></tr>
+    <tr><td>Bridge decode + OGG re-encode</td><td>~20-40 ms</td></tr>
+    <tr><td>HTTP chunked (LAN)</td><td>~5-10 ms</td></tr>
+    <tr><td>&lt;audio&gt; buffering</td><td>~100-150 ms</td></tr>
+    <tr><td><b>TOTAL downstream</b></td><td><b>~150-250 ms</b></td></tr>
+    <tr><td><b>Cliente nativo Mumble</b></td><td><b>~20-30 ms</b></td></tr>
+  </table>
+</div>
+
+<!-- ═══ MURMURD CONFIG ═══ -->
+<div class="cutout tilt-r">
+  <h3>murmurd Config Relevante</h3>
+  <div class="cmd"><span class="comment"># /etc/mumble-server.ini (fragmento)</span>
+host=127.0.0.1
+port=64738
+opusthreshold=0
+bandwidth=64000
+users=5
+textmessagelength=0
+logdays=-1</div>
+
+  <div class="warn">Si murmurd escucha en 127.0.0.1, clientes externos entran vía <b>Tor TCP tunnel</b> o <b>SSH port forward</b>.</div>
+</div>
+
+<!-- ═══ KEYWORDS ═══ -->
+<div class="cutout" style="text-align:center;">
+  <h3>Keywords</h3>
+  <span class="kw">Opus</span>
+  <span class="kw">Vorbis</span>
+  <span class="kw-inv">OGG</span>
+  <span class="kw">gumble</span>
+  <span class="kw-inv">ALSA</span>
+  <span class="kw">chunked transfer</span>
+  <span class="kw-inv">bidireccional</span>
+  <span class="kw">murmurd</span>
+  <span class="kw-inv">:64738</span>
+  <span class="kw">bridge</span>
+  <span class="kw">ffmpeg</span>
+</div>
+
+<footer class="footer">
+  SPEC SUB-FILE · Mumble Bridge · Arq. 3 Poster ·
+  Fuente: web-rtc.md §2.2 Arq. 3 + web-rtc-ext.md EXT-5C
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SPEC · Impacto por Arquitectura — CSI vs USB</title>
+<link rel="stylesheet" href="../poster-template/fanzine.css">
+</head>
+<body>
+
+<div class="nav-back">
+  <a href="../poster-csi-usb.html">◀ VOLVER AL POSTER</a> · SPEC · Impacto por Arquitectura
+</div>
+
+<header class="header" style="padding:18px 10px 14px;">
+  <div class="stamp">YAML</div>
+  <h1 style="font-size:1.8rem;">Impacto por Arquitectura</h1>
+  <div class="sub">Cómo cambia la config de cada servidor media según CSI o USB</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ═══ ARQ 1 — go2rtc ═══ -->
+<div class="cutout">
+  <div class="tape tape-tl"></div>
+  <h3>Arq. 1 — go2rtc: CSI vs. USB</h3>
+
+  <div style="font-size:0.65rem;font-weight:bold;margin-bottom:4px;">go2rtc.yaml — CSI:</div>
+  <div class="cmd" style="font-size:0.58rem;">streams:
+  solar-cam:
+    - v4l2:///dev/video0
+    <span class="comment"># Alternativa más eficiente (zero-copy):</span>
+    <span class="comment"># - exec:rpicam-vid -t 0 --codec h264 --inline</span>
+    <span class="comment">#        --width 1280 --height 720 -o -</span>
+  solar-mic:
+    - alsa:///default
+api:
+  listen: "127.0.0.1:1984"</div>
+
+  <div style="font-size:0.65rem;font-weight:bold;margin:10px 0 4px;">go2rtc.yaml — USB:</div>
+  <div class="cmd" style="font-size:0.58rem;">streams:
+  solar-cam:
+    - v4l2:///dev/video0
+    <span class="comment"># Si webcam soporta H.264 nativo:</span>
+    <span class="comment"># - v4l2:///dev/video0#format=h264</span>
+  solar-mic:
+    - alsa:///default
+api:
+  listen: "127.0.0.1:1984"</div>
+
+  <table class="tbl" style="font-size:0.58rem;margin-top:8px;">
+    <tr><th></th><th>go2rtc + CSI</th><th>go2rtc + USB</th></tr>
+    <tr><td><b>Captura</b></td><td>V4L2 o exec rpicam-vid</td><td>V4L2 directo (MJPEG/YUYV)</td></tr>
+    <tr><td><b>H.264 HW</b></td><td>Sí, vía rpicam-vid exec</td><td>Solo si webcam lo entrega nativo</td></tr>
+    <tr><td><b>RAM</b></td><td>~20-30 MB</td><td>~20-40 MB (si re-encode)</td></tr>
+    <tr><td><b>CPU</b></td><td>~5-10%</td><td>~10-20%</td></tr>
+    <tr><td><b>Docker</b></td><td>--device /dev/video0 --device /dev/vchiq</td><td>--device /dev/video0</td></tr>
+  </table>
+</div>
+
+<!-- ═══ ARQ 2 — MediaMTX ═══ -->
+<div class="cutout tilt-l">
+  <div class="tape tape-tr"></div>
+  <h3>Arq. 2 — MediaMTX: CSI vs. USB</h3>
+
+  <div class="key-concept" style="margin-bottom:8px;">
+    MediaMTX tiene <b>ventaja diferencial para CSI</b>: soporta rpicam nativo (rpiCamera) sin ffmpeg. Para USB necesita ffmpeg como fuente.
+  </div>
+
+  <div style="font-size:0.65rem;font-weight:bold;margin-bottom:4px;">mediamtx.yml — CSI (zero-copy nativo):</div>
+  <div class="cmd" style="font-size:0.58rem;">paths:
+  solar-cam:
+    source: rpiCamera
+    rpiCameraWidth: 1280
+    rpiCameraHeight: 720
+    rpiCameraFPS: 25
+    rpiCameraCodec: h264
+    rpiCameraProfile: baseline
+    rpiCameraLevel: "3.1"
+    rpiCameraBitrate: 1000000</div>
+
+  <div style="font-size:0.65rem;font-weight:bold;margin:10px 0 4px;">mediamtx.yml — USB (requiere ffmpeg):</div>
+  <div class="cmd" style="font-size:0.58rem;">paths:
+  solar-cam:
+    runOnInit: >
+      ffmpeg -f v4l2 -input_format mjpeg
+      -video_size 1280x720 -framerate 25
+      -i /dev/video0 -c:v h264_v4l2m2m -b:v 1M
+      -f rtsp rtsp://localhost:$RTSP_PORT/$MTX_PATH
+    runOnInitRestart: yes</div>
+
+  <table class="tbl" style="font-size:0.58rem;margin-top:8px;">
+    <tr><th></th><th>MediaMTX + CSI</th><th>MediaMTX + USB</th></tr>
+    <tr><td><b>Fuente</b></td><td>rpiCamera nativo (zero-copy)</td><td>ffmpeg exec → RTSP local</td></tr>
+    <tr><td><b>ffmpeg</b></td><td>❌ No necesario</td><td>✅ Necesario</td></tr>
+    <tr><td><b>CPU</b></td><td>~5%</td><td>~15-20%</td></tr>
+    <tr><td><b>Config</b></td><td>10 líneas YAML</td><td>10 líneas YAML + ffmpeg cmd</td></tr>
+    <tr><td><b>Auto-conv</b></td><td colspan="2" style="text-align:center;">RTSP → HLS → WebRTC automática</td></tr>
+  </table>
+
+  <div class="callout" style="margin-top:8px;">
+    ★ MediaMTX: óptima para CSI · subóptima para USB ★<br>
+    ★ go2rtc: equilibrada para ambas ★
+  </div>
+</div>
+
+<!-- ═══ ARQ 3 — Mumble hybrid (go2rtc) ═══ -->
+<div class="cutout tilt-r">
+  <div class="tape tape-tl"></div>
+  <h3>Arq. 3 — Mumble Hybrid (go2rtc): CSI vs. USB</h3>
+  <div class="key-concept" style="margin-bottom:8px;">
+    Hereda el análisis de go2rtc (Arq. 1). El audio va por Mumble → independiente de CSI/USB.
+  </div>
+
+<pre class="diagram" style="font-size:0.55rem;">
+Arq. 3 + CSI                         Arq. 3 + USB
+════════════                          ════════════
+
+🎤 Mic ──► murmurd (audio)           🎤 Mic ──► murmurd (audio)
+🎥 CSI ──► go2rtc (v4l2/rpicam)      🎥 USB ──► go2rtc (v4l2 MJPEG)
+            │                                     │
+            └─ MJPEG/HLS → &lt;img&gt;/&lt;video&gt;         └─ MJPEG/HLS → &lt;img&gt;/&lt;video&gt;
+
+Audio: idéntico (Mumble)              Audio: idéntico (Mumble)
+Vídeo: ~5-10% CPU                     Vídeo: ~10-20% CPU
+RAM: ~65 MB                           RAM: ~75 MB
+</pre>
+
+  <div class="tip">Si se usa USB, go2rtc sigue siendo preferible a MediaMTX: captura V4L2 directa sin ffmpeg.</div>
+</div>
+
+<!-- ═══ ARQ 6 — µStreamer ═══ -->
+<div class="cutout">
+  <h3>Arq. 6 — µStreamer: CSI vs. USB</h3>
+  <table class="tbl" style="font-size:0.58rem;">
+    <tr><th></th><th>µStreamer + CSI</th><th>µStreamer + USB</th></tr>
+    <tr><td><b>Captura</b></td><td>V4L2 + M2M HW encode</td><td>V4L2 MJPEG directo</td></tr>
+    <tr><td><b>CPU</b></td><td>~3-8%</td><td>~15-30%</td></tr>
+    <tr><td><b>Formato salida</b></td><td>MJPEG (siempre)</td><td>MJPEG (siempre)</td></tr>
+    <tr><td><b>H.264 USB</b></td><td>N/A</td><td>Ignora H.264 integrado (usa MJPEG)</td></tr>
+    <tr><td><b>RAM</b></td><td>~10 MB</td><td>~15 MB</td></tr>
+  </table>
+  <div class="warn" style="margin-top:6px;">µStreamer siempre sirve MJPEG. No hace HLS ni H.264 streaming. Para Arq. 6 eso es una feature: latencia mínima en LAN.</div>
+</div>
+
+<!-- ═══ ARQ 5 — RPi-WebRTC ═══ -->
+<div class="cutout tilt-l">
+  <div class="tape tape-tl"></div>
+  <h3>Arq. 5 — RPi-WebRTC: Solo CSI</h3>
+
+  <div class="warn" style="margin-bottom:8px;">
+    <b>RPi-WebRTC NO soporta cámaras USB.</b> Si se usa USB, esta arquitectura queda descartada.
+  </div>
+
+<pre class="diagram" style="font-size:0.55rem;">
+🎥 Cam CSI ──MMAL──► RPi-WebRTC ──WebRTC──► Node.js consumer
+🎤 Mic ─────ALSA───►  :8889                  (node-datachannel)
+                       │ H.264 HW encode       │
+                       │ + Opus audio           ├─ GET /video → MJPEG
+                       │ + DataChannel          └─ GET /audio → OGG
+</pre>
+
+  <table class="tbl" style="font-size:0.58rem;margin-top:8px;">
+    <tr><th>Criterio</th><th>Arq. 5</th></tr>
+    <tr><td><b>Cámara</b></td><td>Solo CSI (MMAL/libcamera)</td></tr>
+    <tr><td><b>RAM</b></td><td>~80-100 MB (RPi-WebRTC ~40 MB + decode Node.js)</td></tr>
+    <tr><td><b>CPU</b></td><td>~15-20% encode HW + ~10% decode en Node.js</td></tr>
+    <tr><td><b>Estado</b></td><td>⚠️ Mantenimiento irregular desde 2023</td></tr>
+    <tr><td><b>JS en cliente</b></td><td>Requiere WebRTC API → incompatible con "cero JS"</td></tr>
+    <tr><td><b>Viabilidad</b></td><td>Solo como fuente para go2rtc (patrón composable)</td></tr>
+  </table>
+
+  <div class="tip" style="margin-top:6px;">Patrón composable: RPi-WebRTC → go2rtc (WHEP) → MJPEG/HLS. Ventaja: encode HW zero-copy. Desventaja: ~50 MB RAM por 2 procesos media.</div>
+</div>
+
+<!-- ═══ SUMMARY ═══ -->
+<div class="cutout">
+  <div class="tape tape-tl"></div>
+  <div class="tape tape-tr"></div>
+  <h3>☞ Resumen: ¿Qué Arquitectura para Qué Cámara?</h3>
+  <table class="tbl" style="font-size:0.58rem;">
+    <tr><th>Arquitectura</th><th>CSI</th><th>USB</th><th>USB H.264</th><th>Recomendación</th></tr>
+    <tr>
+      <td><b>Arq. 1</b> go2rtc</td><td>✔ bueno</td><td>✔ bueno</td><td>✔ óptimo</td>
+      <td>Equilibrada para ambas</td>
+    </tr>
+    <tr>
+      <td><b>Arq. 2</b> MediaMTX</td><td>✔ óptimo</td><td>⚠️ necesita ffmpeg</td><td>⚠️</td>
+      <td>Solo si CSI</td>
+    </tr>
+    <tr>
+      <td><b>Arq. 3</b> Mumble+go2rtc</td><td>✔ bueno</td><td>✔ bueno</td><td>✔ óptimo</td>
+      <td>★ 1ª prioridad · ambas</td>
+    </tr>
+    <tr>
+      <td><b>Arq. 4</b> Janus</td><td>⚠️ heavy</td><td>⚠️ heavy</td><td>⚠️</td>
+      <td>Descartada (RAM)</td>
+    </tr>
+    <tr>
+      <td><b>Arq. 5</b> RPi-WebRTC</td><td>✔ zero-copy</td><td>✘</td><td>✘</td>
+      <td>Solo CSI, mantenimiento dudoso</td>
+    </tr>
+    <tr>
+      <td><b>Arq. 6</b> µStreamer+Mumble</td><td>✔ ultra-light</td><td>✔ ok</td><td>✔</td>
+      <td>★ 1ª bis · LAN only</td>
+    </tr>
+  </table>
+
+  <div class="callout" style="margin-top:8px;">
+    ★ Arq. 3 (go2rtc) gana para USB · Arq. 6 (µStreamer) gana para CSI en LAN ★
+  </div>
+</div>
+
+<!-- ═══ KEYWORDS ═══ -->
+<div class="cutout" style="text-align:center;">
+  <span class="kw">go2rtc</span>
+  <span class="kw-inv">MediaMTX</span>
+  <span class="kw">µStreamer</span>
+  <span class="kw-inv">RPi-WebRTC</span>
+  <span class="kw">rpiCamera</span>
+  <span class="kw-inv">MMAL</span>
+  <span class="kw">YAML</span>
+  <span class="kw-inv">Docker</span>
+</div>
+
+<footer class="footer">
+  SPEC · Impacto por Arquitectura · CSI vs. USB ·
+  Fuente: web-rtc-ext.md EXT-5A / EXT-5B / EXT-5C / EXT-5D
+</footer>
+
+</body>
+</html>

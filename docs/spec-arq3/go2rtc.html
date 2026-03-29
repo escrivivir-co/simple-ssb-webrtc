@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SPEC · go2rtc — Referencia Completa</title>
+<link rel="stylesheet" href="../poster-template/fanzine.css">
+</head>
+<body>
+
+<div class="nav-back">
+  <a href="../poster-arq3.html">◀ VOLVER AL POSTER</a> · SPEC · GO2RTC
+</div>
+
+<header class="header" style="padding:18px 10px 14px;">
+  <div class="stamp">:1984</div>
+  <h1 style="font-size:1.8rem;">go2rtc</h1>
+  <div class="sub">Referencia completa — AlexxIT/go2rtc</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ═══ IDENTITY ═══ -->
+<div class="cutout">
+  <h3>Identidad del Componente</h3>
+  <table class="tbl">
+    <tr><th>Campo</th><th>Valor</th></tr>
+    <tr><td>Repo</td><td>github.com/AlexxIT/go2rtc</td></tr>
+    <tr><td>Lenguaje</td><td>Go (binario estático ~15 MB)</td></tr>
+    <tr><td>Licencia</td><td>MIT</td></tr>
+    <tr><td>RAM típica</td><td>~20–40 MB</td></tr>
+    <tr><td>Config</td><td><span class="hl-box">go2rtc.yaml</span></td></tr>
+    <tr><td>Install Debian</td><td>✘ No hay paquete — binario precompilado ARM</td></tr>
+    <tr><td>Entradas</td><td>V4L2, ALSA, RTSP, ffmpeg exec, HomeKit</td></tr>
+    <tr><td>Salidas</td><td>MJPEG, HLS, RTSP, WebRTC (WHEP), MP4, snapshot</td></tr>
+  </table>
+</div>
+
+<!-- ═══ YAML CONFIG ═══ -->
+<div class="cutout tilt-r">
+  <div class="tape tape-tl"></div>
+  <h3>go2rtc.yaml — Configuración Completa</h3>
+  <div class="key-concept">Toda la config es un único fichero YAML. Sin flags CLI (al contrario que µStreamer). Un solo fichero = una fuente de verdad.</div>
+
+  <div style="font-size:0.72rem;font-weight:bold;margin:10px 0 4px;">Config mínima (lo que arranca el SNH)</div>
+  <div class="cmd"><span class="comment"># /etc/go2rtc/go2rtc.yaml</span>
+streams:
+  solar-cam:
+    - v4l2:///dev/video0         <span class="comment"># USB webcam</span>
+
+api:
+  listen: "127.0.0.1:1984"       <span class="comment"># solo localhost</span></div>
+
+  <div style="font-size:0.72rem;font-weight:bold;margin:10px 0 4px;">Config completa (CSI + USB + ALSA + IP cam)</div>
+  <div class="cmd"><span class="comment"># /etc/go2rtc/go2rtc.yaml — full</span>
+streams:
+  solar-cam:                      <span class="comment"># cámara principal</span>
+    - v4l2:///dev/video0
+  solar-cam-csi:                  <span class="comment"># alt: CSI via libcamera</span>
+    - "exec:libcamerify v4l2-ctl --stream"
+  solar-mic:                      <span class="comment"># micrófono ALSA</span>
+    - alsa:///default
+  ext-cam:                        <span class="comment"># cámara IP externa RTSP</span>
+    - rtsp://192.168.1.50/stream1
+
+api:
+  listen: "127.0.0.1:1984"
+
+webrtc:
+  candidates:
+    - 192.168.1.10:8555           <span class="comment"># IP LAN fija para WHEP</span>
+
+log:
+  level: info</div>
+
+  <div class="warn"><b>api.listen</b> debe ser <b>127.0.0.1</b>, nunca 0.0.0.0. Oasis (:3000) es la única puerta al exterior.</div>
+</div>
+
+<!-- ═══ ENDPOINTS ═══ -->
+<div class="cutout">
+  <h3>HTTP Endpoints — Referencia Completa</h3>
+  <table class="tbl">
+    <tr><th>Endpoint</th><th>Content-Type</th><th>Uso en Arq. 3</th></tr>
+    <tr><td><b>GET /api/frame.mjpeg?src=</b></td><td>multipart/x-mixed-replace</td><td>MJPEG continuo → Oasis GET /video → &lt;img&gt;</td></tr>
+    <tr><td><b>GET /api/stream.m3u8?src=</b></td><td>application/vnd.apple.mpegurl</td><td>HLS playlist → Oasis GET /video.m3u8 → &lt;video&gt;</td></tr>
+    <tr><td><b>GET /api/frame.jpeg?src=</b></td><td>image/jpeg</td><td>Snapshot → Oasis GET /snapshot → SSB blob</td></tr>
+    <tr><td><b>GET /api/stream.mp4?src=</b></td><td>video/mp4</td><td>MP4 progressive (descarga)</td></tr>
+    <tr><td><b>POST /api/webrtc?src=</b></td><td>application/sdp (WHEP)</td><td>WebRTC P2P (necesita JS en browser)</td></tr>
+    <tr><td><b>GET /api/streams</b></td><td>application/json</td><td>Lista de streams (health check)</td></tr>
+    <tr><td><b>GET /api/config</b></td><td>application/json</td><td>Config cargada (debug)</td></tr>
+    <tr><td><b>GET /</b></td><td>text/html</td><td>WebUI embebida (debug, no exponer)</td></tr>
+  </table>
+
+  <div class="tip"><b>/api/frame.jpeg</b> genera un snapshot JPEG puntual — ideal para guardar como <b>SSB blob</b> inmutable. Usar en cron para thumbnails del feed.</div>
+</div>
+
+<!-- ═══ V4L2 + CSI ═══ -->
+<div class="cutout tilt-l">
+  <h3>Captura: V4L2 vs CSI (libcamera)</h3>
+  <table class="tbl">
+    <tr><th>Cámara</th><th>Stream config</th><th>Nota</th></tr>
+    <tr><td><b>USB (UVC)</b></td><td><span class="hl-box">v4l2:///dev/video0</span></td><td>Plug and play. Más simple.</td></tr>
+    <tr><td><b>CSI (libcamera)</b></td><td>exec:libcamerify v4l2-ctl --stream</td><td>Requiere libcamera-tools</td></tr>
+    <tr><td><b>CSI (legacy MMAL)</b></td><td>exec:raspivid -t 0 -o -</td><td>Deprecated en Bookworm</td></tr>
+    <tr><td><b>RTSP externa</b></td><td>rtsp://IP/stream</td><td>Cámara IP en la LAN</td></tr>
+  </table>
+
+  <div class="key-concept"><b>go2rtc no usa V4L2 M2M HW encode</b> (a diferencia de µStreamer). Para CSI, usa la capa de captura de libcamera pero encodea JPEG en CPU. Si la CPU importa mucho → considerar Arq. 6.</div>
+
+  <div class="warn">Para CSI en Bookworm: <b>sudo modprobe bcm2835-v4l2</b> antes de arrancar. O usar exec:libcamerify en el YAML.</div>
+</div>
+
+<!-- ═══ HLS DEEP-DIVE ═══ -->
+<div class="cutout">
+  <h3>Key Concept: HLS — La Ventaja clave de go2rtc</h3>
+
+  <div class="key-concept">
+    <b>HLS (HTTP Live Streaming)</b> fragmenta el vídeo H.264 en segmentos .ts de ~2-6 seg, listados en un .m3u8. El browser descarga segmentos secuencialmente. Resultado: ×10 menos BW que MJPEG, ideal para peers remotos sobre Tor.
+  </div>
+
+  <div class="cmd"><span class="comment"># HLS playlist ejemplo (lo que devuelve go2rtc)</span>
+#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-TARGETDURATION:4
+#EXT-X-MEDIA-SEQUENCE:0
+#EXTINF:4.000,
+segment-000.ts
+#EXTINF:4.000,
+segment-001.ts</div>
+
+  <table class="tbl" style="margin-top:8px;">
+    <tr><th>Browser</th><th>HLS nativo (sin JS)</th><th>Con hls.js</th></tr>
+    <tr><td>Safari (macOS/iOS)</td><td><b>✔ nativo</b></td><td>✔</td></tr>
+    <tr><td>Firefox</td><td>✘</td><td>✔ (necesita JS)</td></tr>
+    <tr><td>Chromium</td><td>✘</td><td>✔ (necesita JS)</td></tr>
+    <tr><td>Tor Browser (Firefox)</td><td>✘</td><td>⚠️ (JS=riesgo privacidad)</td></tr>
+  </table>
+
+  <div class="warn"><b>HLS sin JS</b> solo funciona en Safari. Para Firefox/Chrome remoto: o se permite hls.js en una ruta /remote, o se usa MJPEG directo (más BW). Decisión de diseño del equipo.</div>
+</div>
+
+<!-- ═══ WHEP ═══ -->
+<div class="cutout tilt-r">
+  <h3>WHEP — WebRTC sin Signaling Server</h3>
+
+  <div class="key-concept">
+    <b>WHEP (WebRTC-HTTP Egress Protocol)</b>: estándar IETF que permite consumir streams WebRTC con una simple petición HTTP POST + SDP. go2rtc lo implementa nativamente en /api/webrtc.
+  </div>
+
+  <div class="cmd"><span class="comment"># WHEP handshake (lo que haría un browser con JS)</span>
+POST /api/webrtc?src=solar-cam
+Content-Type: application/sdp
+
+v=0
+o=- ... IN IP4 0.0.0.0
+...
+a=recvonly
+
+→ 201 Created + SDP answer</div>
+
+  <div class="tip">WHEP requiere JS en el browser (RTCPeerConnection). <b>No usar para el browser LAN del SNH</b> (cero JS). Reservar para peers remotos con browser estándar.</div>
+</div>
+
+<!-- ═══ TROUBLESHOOTING ═══ -->
+<div class="cutout">
+  <div class="tape tape-tr"></div>
+  <h3>Troubleshooting — Quick Fixes</h3>
+  <table class="tbl">
+    <tr><th>Síntoma</th><th>Causa probable</th><th>Fix</th></tr>
+    <tr><td>/dev/video0 not found</td><td>No hay cámara</td><td>lsusb, dmesg | grep video, verificar cable</td></tr>
+    <tr><td>YAML parse error</td><td>Indentación incorrecta</td><td><span class="hl-box">python3 -c "import yaml; yaml.safe_load(open('go2rtc.yaml'))"</span></td></tr>
+    <tr><td>MJPEG sin frames</td><td>Stream name incorrecto</td><td>Verificar ?src= coincide con key en streams:</td></tr>
+    <tr><td>High CPU</td><td>Alta resolución + JPEG encode CPU</td><td>Reducir a 720p en cámara o en ffmpeg passthrough</td></tr>
+    <tr><td>HLS 404</td><td>Stream no generando segmentos</td><td>Esperar ~10 seg tras conectar, verificar /api/streams</td></tr>
+    <tr><td>Address in use :1984</td><td>Otra instancia</td><td>killall go2rtc; verificar systemctl status</td></tr>
+    <tr><td>CSI no captura</td><td>libcamera no configurado</td><td>apt install libcamera-tools; probar libcamerify v4l2-ctl --list-devices</td></tr>
+    <tr><td>go2rtc: exec not found</td><td>ffmpeg no en PATH</td><td>apt install ffmpeg</td></tr>
+  </table>
+</div>
+
+<!-- ═══ KEYWORDS ═══ -->
+<div class="cutout" style="text-align:center;">
+  <h3>Keywords</h3>
+  <span class="kw">go2rtc.yaml</span>
+  <span class="kw-inv">V4L2</span>
+  <span class="kw">ALSA</span>
+  <span class="kw">MJPEG</span>
+  <span class="kw-inv">HLS</span>
+  <span class="kw">.m3u8</span>
+  <span class="kw">.ts segments</span>
+  <span class="kw-inv">WHEP</span>
+  <span class="kw">RTSP</span>
+  <span class="kw">WebRTC</span>
+  <span class="kw-inv">:1984</span>
+  <span class="kw">snapshot</span>
+  <span class="kw-inv">Go binary</span>
+  <span class="kw">libcamerify</span>
+  <span class="kw">exec:</span>
+</div>
+
+<footer class="footer">
+  SPEC SUB-FILE · go2rtc · Arq. 3 Poster ·
+  Fuente: web-rtc-ext.md EXT-5C / EXT-10A
+</footer>
+
+</body>
+</html>

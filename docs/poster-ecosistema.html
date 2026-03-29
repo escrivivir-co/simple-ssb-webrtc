@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ecosistema: Librerías &amp; Servidores — Solar Net Hub</title>
+<link rel="stylesheet" href="poster-template/fanzine.css">
+</head>
+<body>
+
+<!-- ════════════ HEADER ════════════ -->
+<header class="header">
+  <div class="stamp">§1.6</div>
+  <h1>Ecosistema</h1>
+  <div class="sub">Librerías &amp; Servidores WebRTC — Todas las Opciones</div>
+  <div class="sub2">Node.js, Go, C, C++, Python — mapa completo de herramientas</div>
+  <div class="issue">web-rtc.md §1.6 + §1.7</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ════════════ OPENING ════════════ -->
+<div class="callout tilt-l">
+  ★ ~2.000 paquetes npm mencionan "webrtc" · La mayoría son wrappers de browser · Las opciones backend-only viables son pocas ★
+</div>
+
+<!-- ════════════ NODE.JS LIBRARIES ════════════ -->
+<div class="cutout">
+  <div class="tape tape-tl"></div>
+  <div class="tape tape-tr"></div>
+  <h3>§1.6.1 — Librerías WebRTC para Node.js (sin navegador)</h3>
+  <table class="tbl" style="font-size:0.52rem;">
+    <tr><th>Librería</th><th>Tipo</th><th>dl/sem</th><th>Licencia</th><th>Estado</th><th>DC</th><th>Media</th><th>Notas clave</th></tr>
+    <tr>
+      <td><b>node-datachannel</b></td>
+      <td>Binding C++ (libdatachannel)</td>
+      <td>42.5k</td>
+      <td>MPL 2.0</td>
+      <td>✅ Activo (v0.32)</td>
+      <td>✔</td>
+      <td>✔</td>
+      <td>~8 MB binario. WS integrado. Polyfill RTCPeerConnection.</td>
+    </tr>
+    <tr>
+      <td><b>werift</b></td>
+      <td>Implementación pura TS</td>
+      <td>27.2k</td>
+      <td>MIT</td>
+      <td>✅ Activo (v0.22)</td>
+      <td>✔</td>
+      <td>✔</td>
+      <td>100% TypeScript. Sin binarios. Simulcast recv, BWE sender.</td>
+    </tr>
+    <tr>
+      <td><b>mediasoup</b></td>
+      <td>SFU (Node + workers C++)</td>
+      <td>20.3k</td>
+      <td>ISC</td>
+      <td>✅ Activo (v3.19)</td>
+      <td>✔</td>
+      <td>✔</td>
+      <td>SFU de producción. Multi-stream, simulcast, SVC. 6.4 MB.</td>
+    </tr>
+    <tr>
+      <td><b>livekit-server-sdk</b></td>
+      <td>SDK para LiveKit (Go)</td>
+      <td>365k</td>
+      <td>Apache 2.0</td>
+      <td>✅ Activo (v2.15)</td>
+      <td>✔</td>
+      <td>✔</td>
+      <td>SDK Node.js ≠ WebRTC en Node. LiveKit es un server Go aparte.</td>
+    </tr>
+    <tr>
+      <td><b>node-webrtc (wrtc)</b></td>
+      <td>Binding libwebrtc</td>
+      <td>~2k</td>
+      <td>BSD</td>
+      <td>⚠️ Archivado (2022)</td>
+      <td>✔</td>
+      <td>✔</td>
+      <td>Referencia histórica. 80+ MB. Builds rotos Node 18+. No usar.</td>
+    </tr>
+    <tr>
+      <td><b>simple-peer</b></td>
+      <td>Wrapper sobre wrtc/browser</td>
+      <td>~150k</td>
+      <td>MIT</td>
+      <td>⚠️ Bajo mant.</td>
+      <td>✔</td>
+      <td>✔</td>
+      <td>En Node depende de wrtc (archivado). En browser funciona bien.</td>
+    </tr>
+    <tr>
+      <td><b>peerjs-server</b></td>
+      <td>Solo señalización</td>
+      <td>~10k</td>
+      <td>MIT</td>
+      <td>✅ Activo</td>
+      <td>✘</td>
+      <td>✘</td>
+      <td>No hace WebRTC — solo coordina SDP entre browsers.</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ════════════ OTHER LANGUAGES ════════════ -->
+<div class="cutout tilt-r">
+  <div class="tape tape-tl"></div>
+  <h3>§1.6.2 — Librerías en Otros Lenguajes</h3>
+  <table class="tbl" style="font-size:0.52rem;">
+    <tr><th>Librería / Servidor</th><th>Lenguaje</th><th>Tipo</th><th>★</th><th>Licencia</th><th>DC</th><th>Media</th><th>Notas clave</th></tr>
+    <tr>
+      <td><b>libdatachannel</b></td>
+      <td>C/C++</td>
+      <td>Librería</td>
+      <td>~2.7k</td>
+      <td>MPL 2.0</td>
+      <td>✔</td>
+      <td>✔</td>
+      <td>Base de node-datachannel. Ligera. Bindings: Rust, Node, Unity, WASM.</td>
+    </tr>
+    <tr>
+      <td><b>Pion/webrtc</b></td>
+      <td>Go</td>
+      <td>Librería</td>
+      <td>~14k</td>
+      <td>MIT</td>
+      <td>✔</td>
+      <td>✔</td>
+      <td>La referencia Go. go2rtc y MediaMTX están sobre Pion. Pura Go, sin CGO.</td>
+    </tr>
+    <tr>
+      <td><b>go2rtc</b></td>
+      <td>Go (Pion)</td>
+      <td>Servidor media</td>
+      <td>~7k</td>
+      <td>MIT</td>
+      <td>✘</td>
+      <td>✔</td>
+      <td>MJPEG, HLS, WebRTC, RTSP. Captura v4l2/ALSA directa. ~15 MB binario.</td>
+    </tr>
+    <tr>
+      <td><b>MediaMTX</b></td>
+      <td>Go (Pion)</td>
+      <td>Servidor media</td>
+      <td>~13k</td>
+      <td>MIT</td>
+      <td>✘</td>
+      <td>✔</td>
+      <td>RTSP↔HLS↔WebRTC auto-conv. rpicam nativo (zero-copy CSI).</td>
+    </tr>
+    <tr>
+      <td><b>Janus Gateway</b></td>
+      <td>C</td>
+      <td>Gateway WebRTC</td>
+      <td>~8.5k</td>
+      <td>GPL 3.0</td>
+      <td>✔</td>
+      <td>✔</td>
+      <td>SFU/MCU por plugins. Requiere JS en cliente para handshake.</td>
+    </tr>
+    <tr>
+      <td><b>aiortc</b></td>
+      <td>Python</td>
+      <td>Librería</td>
+      <td>~4.5k</td>
+      <td>BSD</td>
+      <td>✔</td>
+      <td>✔</td>
+      <td>WebRTC puro Python (asyncio). Útil ML/AI. Python no está en stack SNH.</td>
+    </tr>
+    <tr>
+      <td><b>LiveKit</b></td>
+      <td>Go</td>
+      <td>SFU completa</td>
+      <td>~22k</td>
+      <td>Apache 2.0</td>
+      <td>✔</td>
+      <td>✔</td>
+      <td>SFU más popular. TURN integrado. E2EE. SDKs JS/Python/Go/Rust/Swift/Kotlin.</td>
+    </tr>
+  </table>
+</div>
+
+<div class="washi"></div>
+
+<!-- ════════════ DECISION MAP ════════════ -->
+<div class="cutout diagram-wrap">
+  <div class="tape tape-tl"></div>
+  <div class="tape tape-tr"></div>
+  <h2>☞ §1.6.3 — Mapa de Decisión</h2>
+<pre class="diagram" style="font-size:0.55rem;">
+┌─────────────────────────────────────────────────────────────────┐
+│             MAPA DE DECISIÓN: WebRTC backend                    │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ¿Necesitas P2P puro (2 peers)?                                 │
+│    → node-datachannel (binding C++, ligero)                     │
+│    → werift (TypeScript puro, sin compilar, portable)           │
+│                                                                 │
+│  ¿Necesitas SFU (muchos peers, rooms)?                          │
+│    → mediasoup (SFU embebida en Node.js)                        │
+│    → LiveKit (servidor Go aparte, cloud-ready)                  │
+│                                                                 │
+│  ¿Necesitas servir media al browser SIN JS?                     │
+│    → go2rtc (MJPEG/HLS sin ffmpeg, binario Go)                 │
+│    → MediaMTX (rpicam nativo CSI, auto-conversión)              │
+│    → µStreamer (MJPEG puro, C, ultra-ligero)                    │
+│    → ffmpeg directo → HLS estático (mínimo, sin servidor)       │
+│                                                                 │
+│  ¿Solo señalización (WebRTC corre en browsers)?                 │
+│    → peerjs-server, socket.io, o SSB nativo                     │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+</pre>
+</div>
+
+<!-- ════════════ DETAILED COMPARISONS ════════════ -->
+<div class="cols">
+
+  <div class="col">
+    <!-- P2P: node-datachannel vs werift -->
+    <div class="cutout tilt-l">
+      <div class="tape tape-tr"></div>
+      <h3>P2P: node-datachannel vs. werift</h3>
+      <table class="tbl" style="font-size:0.55rem;">
+        <tr><th>Criterio</th><th>node-datachannel</th><th>werift</th></tr>
+        <tr><td><b>Runtime</b></td><td>C++ nativo (N-API)</td><td>100% TypeScript</td></tr>
+        <tr><td><b>CPU media</b></td><td>Menor (GC no aplica)</td><td>Mayor (sujeto a V8 GC)</td></tr>
+        <tr><td><b>Compilación</b></td><td>Requiere prebuild/C++</td><td><code>npm install</code> sin compilar</td></tr>
+        <tr><td><b>Binario</b></td><td>~8 MB addon</td><td>~3.5 MB (JS/TS)</td></tr>
+        <tr><td><b>API</b></td><td>Propia + polyfill RTC</td><td>Hacia API browser (v2.0)</td></tr>
+        <tr><td><b>WebSocket</b></td><td>✔ cliente + servidor</td><td>✘ externo</td></tr>
+        <tr><td><b>Media tracks</b></td><td>Completa (SRTP)</td><td>Completa (simulcast recv)</td></tr>
+        <tr><td><b>Interop</b></td><td>Chrome, Firefox</td><td>Chrome, Firefox, Pion, aiortc</td></tr>
+        <tr><td><b>Riesgo</b></td><td>Si C++ no compila en ARM</td><td>Si TS es lento en RPi 1 GB</td></tr>
+      </table>
+      <div class="tip">Ambas son viables para P2P en el SNH. node-datachannel gana en CPU; werift gana en portabilidad.</div>
+    </div>
+  </div>
+
+  <div class="col">
+    <!-- SFU: mediasoup vs LiveKit -->
+    <div class="cutout tilt-r">
+      <div class="tape tape-tl"></div>
+      <h3>SFU: mediasoup vs. LiveKit</h3>
+      <table class="tbl" style="font-size:0.55rem;">
+        <tr><th>Criterio</th><th>mediasoup</th><th>LiveKit</th></tr>
+        <tr><td><b>Arquitectura</b></td><td>Se embebe en Node.js</td><td>Servidor Go independiente</td></tr>
+        <tr><td><b>RAM</b></td><td>~50-80 MB</td><td>&gt;100 MB + Redis</td></tr>
+        <tr><td><b>Escala</b></td><td>Decenas de peers</td><td>Miles (cloud-scale)</td></tr>
+        <tr><td><b>Señalización</b></td><td>Signaling-agnostic</td><td>Propia (rooms, tokens JWT)</td></tr>
+        <tr><td><b>TURN</b></td><td>Externo</td><td>Integrado</td></tr>
+        <tr><td><b>SDKs cliente</b></td><td>mediasoup-client (JS)</td><td>JS, Python, Go, Rust, Swift…</td></tr>
+        <tr><td><b>E2EE</b></td><td>Via SFrame</td><td>✔ Nativo</td></tr>
+        <tr><td><b>RPi 3B</b></td><td>⚠️ Heavy para 1 GB</td><td>✘ Inviable</td></tr>
+      </table>
+      <div class="warn">Ambos son overkill para 2 peers P2P. Relevantes si Oasis evoluciona a salas grupales.</div>
+    </div>
+  </div>
+
+</div><!-- /cols -->
+
+<!-- ════════════ MEDIA SERVERS ════════════ -->
+<div class="cutout">
+  <div class="tape tape-tl"></div>
+  <h3>Servidores Media: MJPEG/HLS sin JS en Cliente</h3>
+  <table class="tbl" style="font-size:0.55rem;">
+    <tr><th></th><th>go2rtc</th><th>MediaMTX</th><th>µStreamer</th><th>ffmpeg directo</th></tr>
+    <tr><td><b>Salida sin JS</b></td><td>MJPEG, HLS, JPEG</td><td>MJPEG, HLS</td><td>MJPEG, JPEG</td><td>HLS (.m3u8 + .ts)</td></tr>
+    <tr><td><b>CSI zero-copy</b></td><td>Via exec rpicam</td><td>✔ rpiCamera nativo</td><td>Via M2M HW</td><td>Via rpicam-vid pipe</td></tr>
+    <tr><td><b>USB directo</b></td><td>✔ V4L2</td><td>Necesita ffmpeg</td><td>✔ V4L2</td><td>✔ V4L2</td></tr>
+    <tr><td><b>Audio</b></td><td>✔ ALSA directo</td><td>✔</td><td>✘ Solo vídeo</td><td>✔</td></tr>
+    <tr><td><b>RAM</b></td><td>~20-40 MB</td><td>~15-30 MB</td><td>~5-15 MB</td><td>~30-60 MB</td></tr>
+    <tr><td><b>Config</b></td><td>YAML simple</td><td>YAML extenso</td><td>CLI flags</td><td>Comando largo</td></tr>
+    <tr><td><b>Tor</b></td><td>⚠️ MJPEG/HLS sí</td><td>⚠️ MJPEG/HLS sí</td><td>✔ HTTP puro</td><td>✔ HLS estático</td></tr>
+    <tr><td><b>Poster</b></td><td><a href="poster-arq3.html">Arq. 3</a></td><td><a href="spec-csi-usb/impact.html">Impact spec</a></td><td><a href="poster-arq6.html">Arq. 6</a></td><td><a href="poster-retransmision.html">Retransmisión</a></td></tr>
+  </table>
+</div>
+
+<!-- ════════════ ALTERNATIVES EVALUATED ════════════ -->
+<div class="cutout tilt-l">
+  <div class="tape tape-tr"></div>
+  <h3>Alternativas Evaluadas para Oasis</h3>
+  <table class="tbl" style="font-size:0.58rem;">
+    <tr><th>Opción</th><th>Descripción</th><th>Veredicto</th></tr>
+    <tr>
+      <td><b>JS en cliente</b></td>
+      <td>getUserMedia + RTCPeerConnection en el navegador</td>
+      <td>✘ Rechazado: "no client-side JS" (mantenedores Oasis)</td>
+    </tr>
+    <tr>
+      <td><b>node-datachannel + ffmpeg</b></td>
+      <td>DataChannels + media vía ffmpeg como captura/decode</td>
+      <td>✔ Stack WebRTC puro: ligero, binarios pequeños, acceso HW</td>
+    </tr>
+    <tr>
+      <td><b>werift + ffmpeg</b></td>
+      <td>100% TypeScript, sin compilar binarios</td>
+      <td>✔ Viable: más portable, menor rendimiento media</td>
+    </tr>
+    <tr>
+      <td><b>Mumble (audio) + go2rtc (vídeo)</b></td>
+      <td>Reutilizar murmurd + go2rtc para vídeo</td>
+      <td>✔ Candidata fuerte: cero código audio, Tor-compatible</td>
+    </tr>
+    <tr>
+      <td><b>Mumble (audio) + µStreamer (vídeo)</b></td>
+      <td>murmurd + µStreamer MJPEG</td>
+      <td>✔ Ultra-ligera: ~10-20 MB total, solo LAN</td>
+    </tr>
+    <tr>
+      <td><b>mediasoup SFU</b></td>
+      <td>SFU embebida en Node.js</td>
+      <td>⚠️ Overkill para 2 peers. Si evoluciona a salas: reconsiderar.</td>
+    </tr>
+    <tr>
+      <td><b>LiveKit</b></td>
+      <td>SFU Go + Redis</td>
+      <td>✘ Inviable: &gt;100 MB RAM, diseño cloud-scale, no embebido.</td>
+    </tr>
+    <tr>
+      <td><b>Janus Gateway</b></td>
+      <td>Gateway C con plugins</td>
+      <td>⚠️ Requiere JS en cliente para WebRTC handshake.</td>
+    </tr>
+  </table>
+  <div class="key-concept" style="margin-top:8px;">
+    Las 2 arquitecturas elegidas combinan caminos: <b>Arq. 3</b> (Mumble+go2rtc+node-datachannel) y <b>Arq. 6</b> (Mumble+µStreamer+node-datachannel). Ver <a href="poster-decision.html">Matriz de Decisión</a>.
+  </div>
+</div>
+
+<div class="washi"></div>
+
+<!-- ════════════ THE PARADIGM SHIFT ════════════ -->
+<div class="cutout">
+  <div class="tape tape-tl"></div>
+  <h3>El Cambio de Paradigma: Transmisión ≠ Consumo</h3>
+  <div class="key-concept">
+    El paradigma Web ≠ paradigma HTML5 (subconjunto). Hay una web HTML/CSS <b>sin JavaScript</b> en cliente. WebRTC debe verse como un paradigma de <b>transmisión / consumo de la transmisión</b>: se usa tecnología estándar para transmitir, pero se disocia en la capa de consumo, actuando como relay.
+  </div>
+
+<pre class="diagram" style="font-size:0.55rem;">
+┌─────────────────────────────┐     ┌─────────────────────────────┐
+│   TRANSMISIÓN               │     │   CONSUMO                   │
+│                             │     │                             │
+│  WebRTC estándar:           │     │  HTML/CSS puro:             │
+│  · SDP, ICE, DTLS, SRTP    │     │  · &lt;img src="/mjpeg"&gt;       │
+│  · DataChannels (SCTP)      │     │  · &lt;video src="/hls"&gt;       │
+│  · node-datachannel         │     │  · &lt;audio src="/ogg"&gt;       │
+│  · werift                   │     │  · sin JS en cliente        │
+│  · go2rtc / MediaMTX        │     │                             │
+│                             │     │  Mumble VoIP:               │
+│  Mumble VoIP:               │     │  · gumble → ffmpeg → OGG   │
+│  · Opus, TCP fallback       │     │  · &lt;audio src="/audio"&gt;     │
+│  · OCB-AES128               │     │                             │
+└──────────────┬──────────────┘     └─────────────────────────────┘
+               │                                ▲
+               │  Servidor media               │
+               │  (go2rtc / µStreamer /        │
+               │   ffmpeg / Oasis proxy)       │
+               └───────────────────────────────┘
+</pre>
+</div>
+
+<!-- ════════════ KEYWORDS ════════════ -->
+<div class="cutout" style="text-align:center;">
+  <span class="kw">node-datachannel</span>
+  <span class="kw-inv">werift</span>
+  <span class="kw">mediasoup</span>
+  <span class="kw-inv">LiveKit</span>
+  <span class="kw">Pion</span>
+  <span class="kw-inv">libdatachannel</span>
+  <span class="kw">go2rtc</span>
+  <span class="kw-inv">MediaMTX</span>
+  <span class="kw">µStreamer</span>
+  <span class="kw-inv">Janus</span>
+  <span class="kw">aiortc</span>
+  <span class="kw-inv">simple-peer</span>
+</div>
+
+<footer class="footer">
+  Ecosistema: Librerías &amp; Servidores · SSB-WebRTC · Solar Net Hub ·
+  Fuente: web-rtc.md §1.6 + §1.7
+</footer>
+
+</body>
+</html>

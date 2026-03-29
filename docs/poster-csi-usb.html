@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CSI vs USB — Cámaras en el Solar Net Hub</title>
+<link rel="stylesheet" href="poster-template/fanzine.css">
+</head>
+<body>
+
+<!-- ════════════ HEADER ════════════ -->
+<header class="header">
+  <div class="stamp">HARDWARE</div>
+  <h1>CSI vs. USB</h1>
+  <div class="sub">Cámaras en el Solar Net Hub · RPi 3B</div>
+  <div class="sub2">Qué cambia según la cámara — pipeline, CPU, RAM, Docker</div>
+  <div class="issue">web-rtc-ext.md · EXT-1 + EXT-2</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ════════════ SPEC INDEX ════════════ -->
+<div class="cutout" style="text-align:center;">
+  <h3>☞ Deep-Dive Specs</h3>
+  <a class="deep-link" href="spec-csi-usb/pipeline.html">Pipeline &amp; Comandos — ffmpeg, rpicam-vid, autodetección</a><br>
+  <a class="deep-link" href="spec-csi-usb/impact.html">Impacto por Arquitectura — go2rtc, MediaMTX, µStreamer, YAML configs</a>
+</div>
+
+<!-- ════════════ STATS BAR ════════════ -->
+<div class="stats-bar tilt-r">
+  <div class="stat"><span class="val">~5%</span><span class="lbl">CPU CSI</span></div>
+  <div class="stat"><span class="val">~15%</span><span class="lbl">CPU USB</span></div>
+  <div class="stat"><span class="val">250 mW</span><span class="lbl">CSI power</span></div>
+  <div class="stat"><span class="val">1.5W</span><span class="lbl">USB power</span></div>
+  <div class="stat"><span class="val">20 cm</span><span class="lbl">CSI max</span></div>
+  <div class="stat"><span class="val">5 m</span><span class="lbl">USB max</span></div>
+</div>
+
+<!-- ════════════ HARDWARE COMPARISON ════════════ -->
+<div class="cutout">
+  <div class="tape tape-tl"></div>
+  <h3>Comparativa Hardware</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Criterio</th><th>Cámara CSI (ribbon)</th><th>Cámara USB (UVC)</th></tr>
+    <tr>
+      <td><b>Interfaz</b></td>
+      <td>FFC 15-pin · MIPI CSI-2 · D-PHY lanes</td>
+      <td>USB 2.0 (480 Mbps) · Conector estándar</td>
+    </tr>
+    <tr>
+      <td><b>Protocolo</b></td>
+      <td>RAW Bayer directo al ISP del SoC</td>
+      <td>UVC 1.1/1.5 · Frames YUYV/MJPEG/H.264</td>
+    </tr>
+    <tr>
+      <td><b>GPU/ISP</b></td>
+      <td>✔ Directo · VideoCore IV procesa RAW</td>
+      <td>✘ No pasa por ISP · Frame llega a userspace</td>
+    </tr>
+    <tr>
+      <td><b>H.264 HW</b></td>
+      <td>✔ rpicam-vid encode directo · ~5% CPU</td>
+      <td>⚠️ Captura UVC → V4L2 M2M → GPU · ~10-15% CPU</td>
+    </tr>
+    <tr>
+      <td><b>Latencia</b></td>
+      <td>~20-50 ms (ISP pipeline, zero-copy)</td>
+      <td>~50-150 ms (USB polling + decode)</td>
+    </tr>
+    <tr>
+      <td><b>Driver</b></td>
+      <td>bcm2835-unicam · libcamera</td>
+      <td>uvcvideo (genérico) · V4L2</td>
+    </tr>
+    <tr>
+      <td><b>rpicam-*</b></td>
+      <td>✔ rpicam-vid, rpicam-still, rpicam-hello</td>
+      <td>✘ No detecta USB · Usar ffmpeg/v4l2-ctl</td>
+    </tr>
+    <tr>
+      <td><b>Distancia</b></td>
+      <td>~20 cm (ribbon frágil, extensor ~1 m)</td>
+      <td>Hasta 5 m (USB 2.0) · &gt;10 m con hub activo</td>
+    </tr>
+    <tr>
+      <td><b>Hot-plug</b></td>
+      <td>✘ Requiere apagado</td>
+      <td>✔ Plug &amp; play en caliente</td>
+    </tr>
+    <tr>
+      <td><b>Consumo</b></td>
+      <td>~250 mW (3.3V del conector CSI)</td>
+      <td>~500 mW–1.5W (5V bus USB)</td>
+    </tr>
+    <tr>
+      <td><b>Coste</b></td>
+      <td>Cam Module 3: ~€25 · HQ: ~€50</td>
+      <td>Genérica: €5-20 · H.264 HW: €50-80</td>
+    </tr>
+    <tr>
+      <td><b>Docker</b></td>
+      <td>⚠️ --device /dev/vchiq + /dev/video0 + /dev/media0</td>
+      <td>✔ --device /dev/video0 (simple)</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ════════════ CALLOUT ════════════ -->
+<div class="callout tilt-l">
+  ★ CSI: zero-copy del sensor al encoder HW · USB: 2 copias por frame ★
+</div>
+
+<!-- ════════════ TWO COLUMNS ════════════ -->
+<div class="cols">
+
+  <div class="col">
+    <!-- SCENARIOS -->
+    <div class="cutout tilt-l">
+      <div class="tape tape-tr"></div>
+      <h3>¿Cuándo CSI? ¿Cuándo USB?</h3>
+      <table class="tbl" style="font-size:0.6rem;">
+        <tr><th>Escenario</th><th>CSI</th><th>USB</th></tr>
+        <tr><td>Cámara fija integrada</td><td><b>✔</b></td><td></td></tr>
+        <tr><td>Distancia &gt;30 cm</td><td></td><td><b>✔</b></td></tr>
+        <tr><td>Pan-tilt-zoom (PTZ)</td><td></td><td><b>✔</b></td></tr>
+        <tr><td>Webcam reciclada</td><td></td><td><b>✔</b></td></tr>
+        <tr><td>Visión nocturna (IR)</td><td><b>✔</b> NoIR</td><td>⚠️</td></tr>
+        <tr><td>Múltiples cámaras</td><td>⚠️ 1 CSI</td><td><b>✔</b></td></tr>
+        <tr><td>Docker simple</td><td>⚠️</td><td><b>✔</b></td></tr>
+        <tr><td>Máx. eficiencia CPU</td><td><b>✔</b></td><td></td></tr>
+        <tr><td>Máx. eficiencia mW</td><td><b>✔</b></td><td></td></tr>
+      </table>
+
+      <div class="warn" style="margin-top:8px;">RPi 3B tiene <b>1 solo puerto CSI</b>. Si se necesitan 2+ cámaras, al menos una será USB.</div>
+    </div>
+  </div>
+
+  <div class="col">
+    <!-- KEY DIFFERENCE: H.264 HW -->
+    <div class="cutout tilt-r">
+      <div class="tape tape-tl"></div>
+      <h3>Encoder H.264 HW: La Diferencia Clave</h3>
+
+      <div style="font-size:0.65rem;font-weight:bold;margin-bottom:4px;">CSI — zero-copy:</div>
+      <div class="cmd" style="font-size:0.58rem;">Sensor → MIPI CSI-2 → ISP (GPU) → H.264 (GPU) → DMA
+<span class="comment">Sin copia a RAM principal · CPU: ~5%</span></div>
+
+      <div style="font-size:0.65rem;font-weight:bold;margin:8px 0 4px;">USB — con copia:</div>
+      <div class="cmd" style="font-size:0.58rem;">Sensor → USB → uvcvideo → RAM → V4L2 M2M → GPU
+<span class="comment">Copia a userspace + copia a GPU · CPU: ~10-15%</span></div>
+
+      <div class="key-concept" style="margin-top:8px;">
+        <b>2-3× más consumo CPU con USB</b>. En un device solar de 22W con 1 GB RAM compartida CPU/GPU, cada frame USB se copia dos veces.
+      </div>
+
+      <div class="tip" style="margin-top:6px;"><b>Excepción</b>: webcams con H.264 integrado (C920, C930e) entregan H.264 directo por USB — sin re-encode. CPU ~3%. Pero cuestan €50-80 y consumen ~1.5W.</div>
+    </div>
+  </div>
+
+</div><!-- /cols -->
+
+<div class="washi"></div>
+
+<!-- ════════════ CAPTURE FLOW DIAGRAM ════════════ -->
+<div class="cutout diagram-wrap">
+  <div class="tape tape-tl"></div>
+  <div class="tape tape-tr"></div>
+  <h2>☞ Flujo de Captura: CSI vs. USB</h2>
+<pre class="diagram">
+  CÁMARA CSI                             CÁMARA USB
+  ══════════                             ══════════
+
+  ┌──────────┐                           ┌──────────┐
+  │ Sensor   │                           │ Sensor   │
+  │ IMX219/  │                           │ (varios) │
+  │ IMX708   │                           └────┬─────┘
+  └────┬─────┘                                │
+       │ MIPI CSI-2                           │ USB UVC
+       │ (RAW Bayer)                          │ (YUYV/MJPEG/H.264)
+       │                                      │
+  ┌────┴───────────┐                    ┌─────┴──────────────┐
+  │ ISP VideoCore  │                    │ Driver uvcvideo    │
+  │ Debayer + AWB  │                    │ Decode YUYV/MJPEG  │
+  │ + H.264 HW     │                    │ → Buffer userspace │
+  └────┬───────────┘                    └─────┬──────────────┘
+       │                                      │
+       │  /dev/video0                         │ /dev/video0
+       │  (libcamera)                         │ (V4L2)
+       │                                      │
+  ┌────┴──────────────────────────────────────┴────┐
+  │                                                │
+  │  A: rpicam-vid (SOLO CSI · zero-copy)          │
+  │  B: ffmpeg -f v4l2 (ambas)                     │
+  │  C: go2rtc v4l2 (ambas)                        │
+  │  D: µStreamer V4L2 (ambas)                      │
+  │  E: MediaMTX rpiCamera (SOLO CSI · zero-copy)  │
+  │  F: RPi-WebRTC MMAL (SOLO CSI)                 │
+  │                                                │
+  └────────────────────────────────────────────────┘
+</pre>
+</div>
+
+<!-- ════════════ IMPACT ON ARCHITECTURES ════════════ -->
+<div class="cutout">
+  <h3>Impacto en las Arquitecturas Elegidas</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th></th><th>CSI</th><th>USB</th><th>USB con H.264 HW</th></tr>
+    <tr>
+      <td><b>Arq. 3</b> (go2rtc)</td>
+      <td>v4l2 o exec rpicam-vid · ~5-10% CPU</td>
+      <td>v4l2 MJPEG · ~10-20% CPU</td>
+      <td>v4l2 H.264 passthrough · ~3% CPU</td>
+    </tr>
+    <tr>
+      <td><b>Arq. 6</b> (µStreamer)</td>
+      <td>V4L2 + M2M HW · ~3-8% CPU</td>
+      <td>V4L2 MJPEG direct · ~15-30% CPU</td>
+      <td>V4L2 MJPEG (ignora H.264 integrado)</td>
+    </tr>
+    <tr>
+      <td><b>Audio (Mumble)</b></td>
+      <td colspan="3" style="text-align:center;">Idéntico — audio es independiente de CSI/USB</td>
+    </tr>
+    <tr>
+      <td><b>RAM total</b></td>
+      <td>~65 MB (Arq 3) / ~10 MB (Arq 6)</td>
+      <td>~75 MB (Arq 3) / ~15 MB (Arq 6)</td>
+      <td>~65 MB (Arq 3) / ~10 MB (Arq 6)</td>
+    </tr>
+  </table>
+
+  <div class="key-concept" style="margin-top:8px;">
+    <b>Mumble no cambia con la cámara.</b> Ambas arquitecturas elegidas (Arq. 3 y 6) soportan CSI y USB sin cambios de arquitectura — solo cambia la config de captura de vídeo.
+  </div>
+</div>
+
+<!-- ════════════ DOCKER ════════════ -->
+<div class="cutout tilt-r">
+  <div class="tape tape-tl"></div>
+  <h3>Docker: Passthrough de Cámara</h3>
+
+  <div style="font-size:0.65rem;font-weight:bold;margin-bottom:4px;">USB (simple):</div>
+  <div class="cmd"><span class="prompt">docker run --device /dev/video0 ...</span></div>
+
+  <div style="font-size:0.65rem;font-weight:bold;margin:8px 0 4px;">CSI — RPi 3B legacy (vchiq):</div>
+  <div class="cmd"><span class="prompt">docker run --device /dev/vchiq \</span>
+  --device /dev/video0 ...</div>
+
+  <div style="font-size:0.65rem;font-weight:bold;margin:8px 0 4px;">CSI — libcamera moderno:</div>
+  <div class="cmd"><span class="prompt">docker run --device /dev/video0 \</span>
+  --device /dev/media0 \
+  -v /dev/dma_heap:/dev/dma_heap ...</div>
+
+  <div class="warn">El SNH corre Docker → Debian Bookworm. USB es más fácil de pasar al contenedor. CSI requiere montar dispositivos extra del ISP.</div>
+</div>
+
+<!-- ════════════ AUTODETECTION ════════════ -->
+<div class="cutout tilt-l">
+  <h3>Detección Automática</h3>
+  <div class="cmd"><span class="comment"># ¿Hay cámara CSI?</span>
+<span class="prompt">libcamera-hello --list-cameras</span>
+<span class="comment"># Si lista algo → CSI presente</span>
+
+<span class="comment"># ¿Qué formatos soporta la cámara?</span>
+<span class="prompt">v4l2-ctl --list-formats-ext -d /dev/video0</span>
+<span class="comment"># CSI: aparece H264, resoluciones altas</span>
+<span class="comment"># USB: aparece MJPG y/o YUYV</span>
+<span class="comment"># USB H.264 HW: aparece H264 entre formatos</span></div>
+
+  <div class="tip">Fase 0 (hardware_detect.js) automatiza esto: retorna <code>{ type: 'csi' | 'usb' | 'usb-h264', device: '/dev/video0', formats: [...] }</code> para que el pipeline se configure solo.</div>
+</div>
+
+<!-- ════════════ QUICK REFERENCE ════════════ -->
+<div class="cutout">
+  <h3>Referencia Rápida — Qué Usar Según Cámara</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Herramienta</th><th>CSI</th><th>USB</th><th>USB H.264</th></tr>
+    <tr><td>rpicam-vid</td><td>✔ (óptimo)</td><td>✘</td><td>✘</td></tr>
+    <tr><td>libcamera-vid</td><td>✔</td><td>✘</td><td>✘</td></tr>
+    <tr><td>ffmpeg -f v4l2</td><td>✔</td><td>✔ (universal)</td><td>✔ (-c:v copy)</td></tr>
+    <tr><td>go2rtc v4l2</td><td>✔</td><td>✔</td><td>✔</td></tr>
+    <tr><td>µStreamer</td><td>✔ (M2M HW)</td><td>✔ (MJPEG)</td><td>✔ (MJPEG)</td></tr>
+    <tr><td>MediaMTX rpiCam</td><td>✔ (zero-copy)</td><td>✘ (requiere ffmpeg)</td><td>✘</td></tr>
+    <tr><td>RPi-WebRTC</td><td>✔ (MMAL)</td><td>✘</td><td>✘</td></tr>
+    <tr><td>v4l2-ctl</td><td>✔</td><td>✔</td><td>✔</td></tr>
+  </table>
+</div>
+
+<!-- ════════════ KEYWORDS ════════════ -->
+<div class="cutout" style="text-align:center;">
+  <span class="kw">MIPI CSI-2</span>
+  <span class="kw-inv">UVC</span>
+  <span class="kw">V4L2</span>
+  <span class="kw-inv">libcamera</span>
+  <span class="kw">rpicam-vid</span>
+  <span class="kw-inv">H.264 M2M</span>
+  <span class="kw">VideoCore IV</span>
+  <span class="kw-inv">ISP</span>
+  <span class="kw">MJPEG</span>
+  <span class="kw-inv">zero-copy</span>
+  <span class="kw">uvcvideo</span>
+  <span class="kw-inv">D-PHY</span>
+</div>
+
+<footer class="footer">
+  CSI vs. USB · SSB-WebRTC · Solar Net Hub ·
+  Fuente: web-rtc-ext.md EXT-1 + EXT-2
+</footer>
+
+</body>
+</html>

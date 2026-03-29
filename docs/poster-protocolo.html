@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Protocolos: WebRTC &amp; Mumble — Solar Net Hub</title>
+<link rel="stylesheet" href="poster-template/fanzine.css">
+</head>
+<body>
+
+<!-- ════════════ HEADER ════════════ -->
+<header class="header">
+  <div class="stamp">§1</div>
+  <h1>Protocolos</h1>
+  <div class="sub">WebRTC &amp; Mumble — Los Dos Stacks de Transmisión</div>
+  <div class="sub2">Cómo viajan datos, audio y vídeo entre peers</div>
+  <div class="issue">web-rtc.md §1.1–§1.5 + §1.7 (Mumble)</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ════════════ STATS BAR ════════════ -->
+<div class="stats-bar tilt-r">
+  <div class="stat"><span class="val">7</span><span class="lbl">capas WebRTC</span></div>
+  <div class="stat"><span class="val">4</span><span class="lbl">capas Mumble</span></div>
+  <div class="stat"><span class="val">5</span><span class="lbl">RFCs core</span></div>
+  <div class="stat"><span class="val">Opus</span><span class="lbl">codec compartido</span></div>
+</div>
+
+<!-- ════════════ WEBRTC PROTOCOL STACK ════════════ -->
+<div class="cutout">
+  <div class="tape tape-tl"></div>
+  <h3>Ficha Técnica: Stack WebRTC</h3>
+  <table class="tbl" style="font-size:0.58rem;">
+    <tr><th>Capa</th><th>Protocolo</th><th>Puerto</th><th>Función</th></tr>
+    <tr><td><b>Señalización</b></td><td>SDP (Session Description Protocol)</td><td>Fuera de banda</td><td>Negociación de capacidades y direcciones</td></tr>
+    <tr><td><b>Descubrimiento</b></td><td>ICE (RFC 8445)</td><td>Dinámico UDP</td><td>Encontrar la mejor ruta entre peers</td></tr>
+    <tr><td><b>NAT traversal</b></td><td>STUN (RFC 8489) / TURN (RFC 8656)</td><td>3478 / 443</td><td>Resolver IP pública / relay</td></tr>
+    <tr><td><b>Transporte seguro</b></td><td>DTLS 1.2 (RFC 6347)</td><td>Sobre ICE</td><td>Handshake criptográfico, intercambio de claves</td></tr>
+    <tr><td><b>Media</b></td><td>SRTP (RFC 3711)</td><td>Sobre DTLS</td><td>Audio/vídeo cifrado (Opus, VP8/H.264)</td></tr>
+    <tr><td><b>Datos</b></td><td>SCTP (RFC 4960) sobre DTLS</td><td>Sobre DTLS</td><td>DataChannels: mensajes fiables u ordenados</td></tr>
+    <tr><td><b>Codecs oblg.</b></td><td>Opus (audio), VP8 (vídeo)</td><td>—</td><td>Mínimo común garantizado por spec</td></tr>
+  </table>
+  <div style="font-size:0.55rem;opacity:0.7;margin-top:6px;">
+    RFCs: <a href="https://www.w3.org/TR/webrtc/">W3C WebRTC 1.0</a> ·
+    <a href="https://datatracker.ietf.org/doc/html/rfc8825">RFC 8825</a> Overview ·
+    <a href="https://datatracker.ietf.org/doc/html/rfc8829">RFC 8829</a> JSEP ·
+    <a href="https://datatracker.ietf.org/doc/html/rfc8831">RFC 8831</a> Data Channels ·
+    <a href="https://datatracker.ietf.org/doc/html/rfc8826">RFC 8826</a> Security
+  </div>
+</div>
+
+<!-- ════════════ SDP SIGNALING ════════════ -->
+<div class="cutout diagram-wrap tilt-l">
+  <div class="tape tape-tr"></div>
+  <h3>§1.1 — Señalización: Oferta y Respuesta (SDP)</h3>
+  <div class="key-concept" style="margin-bottom:8px;">
+    WebRTC <b>no define</b> el canal de señalización — eso es "fuera de banda" (HTTP, WebSocket, SSB, formulario HTML…). Lo que sí define es el formato: <b>SDP</b>.
+  </div>
+<pre class="diagram" style="font-size:0.55rem;">
+Peer A                     Señalización                      Peer B
+══════                  (cualquier canal)                    ══════
+  │                                                            │
+  │── createOffer() ─────────────────────────────────────────&gt;│
+  │   (SDP: codecs, ICE candidates, fingerprint DTLS)          │
+  │                                                            │
+  │                                        setRemoteDescription(offer)
+  │                                        createAnswer()
+  │                                                            │
+  │&lt;──────────────────────────────────── answer (SDP) ────────│
+  │                                                            │
+  │   setRemoteDescription(answer)                             │
+  │                                                            │
+  │◄═══════════ DTLS handshake + SRTP/SCTP ══════════════════►│
+  │                  Canal abierto                             │
+</pre>
+  <div class="tip">El SDP contiene: codecs soportados, candidatos ICE (IPs:puertos), fingerprint del certificado DTLS, y los media tracks ofrecidos.</div>
+</div>
+
+<!-- ════════════ THREE LAYERS ════════════ -->
+<div class="cutout diagram-wrap">
+  <div class="tape tape-tl"></div>
+  <div class="tape tape-tr"></div>
+  <h2>§1.2 — Tres Capas de Comunicación</h2>
+<pre class="diagram">
+                ┌──────────────────────────────────┐
+                │      Señalización (SDP)          │
+                │  (HTTP, WebSocket, SSB, manual)  │
+                └────────┬─────────────────────────┘
+                         │ establece
+      ┌──────────────────┼──────────────────────┐
+      │                  │                      │
+┌─────┴──────┐   ┌───────┴────────┐   ┌────────┴───────┐
+│ DataChannel│   │ Media Stream   │   │    Files       │
+│   (SCTP)   │   │   (SRTP)       │   │  (SCTP bin)    │
+│            │   │                │   │                │
+│ mensajes   │   │ audio: Opus    │   │ arraybuffer    │
+│ texto/bin  │   │ vídeo: VP8/H264│   │ chunked        │
+│ chat, JSON │   │ tracks         │   │ con progreso   │
+└─────┬──────┘   └───────┬────────┘   └────────┬───────┘
+      │                  │                      │
+      └──────────────────┼──────────────────────┘
+                         │
+              ┌──────────┴──────────────────────┐
+              │ Transporte: DTLS-SRTP sobre ICE │
+              │        (peer-to-peer)           │
+              └─────────────────────────────────┘
+</pre>
+  <div class="key-concept">Las 3 capas comparten el mismo canal ICE (misma conexión UDP), multiplexadas por DTLS. La señalización solo interviene al inicio — después, todo el tráfico es directo.</div>
+</div>
+
+<div class="washi"></div>
+
+<!-- ════════════ ICE ════════════ -->
+<div class="cutout tilt-r">
+  <div class="tape tape-tl"></div>
+  <h3>§1.3 — ICE: Descubrimiento de Ruta</h3>
+  <div class="key-concept" style="margin-bottom:8px;">
+    ICE (<a href="https://datatracker.ietf.org/doc/html/rfc8445">RFC 8445</a>) encuentra la <b>mejor ruta</b> entre dos peers en 3 fases.
+  </div>
+
+  <table class="tbl" style="font-size:0.58rem;">
+    <tr><th>Fase</th><th>Qué hace</th><th>Detalle</th></tr>
+    <tr>
+      <td><b>1. Gathering</b></td>
+      <td>Recopilar candidatos</td>
+      <td><b>host</b>: IPs locales (192.168.1.50:54321)<br>
+          <b>srflx</b>: IP pública vía STUN (85.34.22.10:54321)<br>
+          <b>relay</b>: dirección TURN (turn.example.com:443)</td>
+    </tr>
+    <tr>
+      <td><b>2. Checks</b></td>
+      <td>Probar pares de candidatos</td>
+      <td>STUN Binding Requests directos entre peers. Cada par recibe prioridad calculada.</td>
+    </tr>
+    <tr>
+      <td><b>3. Nomination</b></td>
+      <td>Elegir ruta activa</td>
+      <td>Par con mejor prioridad + conectividad. Si la red cambia → ICE restart.</td>
+    </tr>
+  </table>
+
+  <div class="tip">En LAN, el candidato <code>host</code> conecta directamente en milisegundos. En WAN entran STUN y TURN.</div>
+</div>
+
+<!-- ════════════ TWO COLUMNS: STUN / TURN ════════════ -->
+<div class="cols">
+
+  <div class="col">
+    <!-- STUN -->
+    <div class="cutout tilt-l">
+      <div class="tape tape-tr"></div>
+      <h3>§1.4 — STUN: IP Pública</h3>
+<pre class="diagram" style="font-size:0.5rem;">
+  Cliente              Servidor STUN
+  ═══════              ═════════════
+    │                        │
+    │── Binding Req (UDP) ──&gt;│
+    │                        │ (ve IP:puerto
+    │                        │  tras el NAT)
+    │&lt;── Binding Response ───│
+    │ XOR-MAPPED-ADDRESS:    │
+    │ 85.34.22.10:54321      │
+    │                        │
+</pre>
+      <div style="font-size:0.58rem;">
+        <b>Solo pregunta-respuesta.</b> STUN no retransmite tráfico — solo dice "tu IP pública es X".<br><br>
+        Servidores públicos:<br>
+        <code>stun:stun.l.google.com:19302</code><br>
+        <code>stun:stun.stunprotocol.org:3478</code>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <!-- TURN -->
+    <div class="cutout tilt-r">
+      <div class="tape tape-tl"></div>
+      <h3>§1.5 — TURN: Relay</h3>
+<pre class="diagram" style="font-size:0.5rem;">
+Peer A         TURN           Peer B
+══════         ════           ══════
+  │              │              │
+  │─ Allocate ──&gt;│              │
+  │&lt;─ relay addr │              │
+  │              │              │
+  │═ datos ═════&gt;│═══ relay ═══&gt;│
+  │&lt;═════════════│&lt;═════════════│
+  │  (todo pasa por TURN)       │
+</pre>
+      <div style="font-size:0.58rem;">
+        <b>Fallback cuando STUN falla</b> (NATs simétricos, firewalls). TURN <b>sí retransmite todo</b> el tráfico — consume BW y CPU en el servidor.<br><br>
+        ICE siempre prefiere host → srflx → relay (último recurso).
+      </div>
+    </div>
+  </div>
+
+</div><!-- /cols -->
+
+<div class="washi"></div>
+
+<!-- ════════════ MUMBLE PROTOCOL STACK ════════════ -->
+<div class="cutout">
+  <div class="tape tape-tl"></div>
+  <div class="tape tape-tr"></div>
+  <h3>Ficha Técnica: Stack Mumble</h3>
+  <div class="key-concept" style="margin-bottom:8px;">
+    Mumble es un sistema VoIP completo con &gt;20 años de madurez, <b>ya desplegado</b> en el SNH (~10 MB RAM). Su protocolo condiciona la arquitectura.
+  </div>
+  <table class="tbl" style="font-size:0.58rem;">
+    <tr><th>Capa</th><th>Protocolo</th><th>Puerto</th><th>Función</th></tr>
+    <tr><td><b>Control</b></td><td>TCP + TLS 1.2 (AES-256-SHA)</td><td>64738</td><td>Auth, canales, ACLs, estado users, chat texto</td></tr>
+    <tr><td><b>Voz</b></td><td>UDP + OCB-AES128</td><td>64738</td><td>Audio Opus/CELT cifrado, ~20–50 ms latencia</td></tr>
+    <tr><td><b>Voz fallback</b></td><td>TCP tunnel</td><td>64738</td><td>Voz sobre TCP cuando UDP no funciona (NAT/Tor)</td></tr>
+    <tr><td><b>Serialización</b></td><td>Protocol Buffers (Mumble.proto)</td><td>—</td><td>Mensajes de control tipados y extensibles</td></tr>
+    <tr><td><b>Codec</b></td><td>Opus (desde v1.2.4, 2013)</td><td>—</td><td>Mismo codec que WebRTC</td></tr>
+    <tr><td><b>Cifrado voz</b></td><td>OCB-AES128 (AEAD)</td><td>—</td><td>Confidencialidad + integridad en un solo paso</td></tr>
+    <tr><td><b>Auth</b></td><td>Cert X.509 del cliente + username</td><td>—</td><td>TLS mutuo opcional</td></tr>
+  </table>
+</div>
+
+<!-- ════════════ MUMBLE SIGNALING ════════════ -->
+<div class="cutout diagram-wrap tilt-l">
+  <div class="tape tape-tr"></div>
+  <h3>Flujo de Conexión Mumble</h3>
+<pre class="diagram" style="font-size:0.52rem;">
+Mumble Client                              murmurd (servidor)
+══════════════                             ═══════════════════
+     │                                              │
+     │── TCP connect ──────────────────────────────&gt;│
+     │── TLS handshake (AES-256-SHA) ─────────────&gt;│
+     │&lt;─ TLS established ─────────────────────────│
+     │                                              │
+     │── Version (protobuf) ──────────────────────&gt;│
+     │── Authenticate (user, cert, tokens) ───────&gt;│
+     │&lt;─ CryptSetup (key, nonce para OCB-AES128) ─│
+     │&lt;─ ChannelState[] (árbol de canales) ───────│
+     │&lt;─ UserState[] (usuarios conectados) ───────│
+     │&lt;─ ServerSync (session_id, permisos) ───────│
+     │                                              │
+     │══ UDP ping ════════════════════════════════&gt;│
+     │&lt;═ UDP pong ════════════════════════════════│
+     │                                              │
+     │══ Voice (Opus, OCB-AES128, UDP) ══════════&gt;│
+     │&lt;═ Voice (otros users, Opus, UDP) ═════════│
+     │                                              │
+     │   [si UDP falla → voice tunnel sobre TCP]    │
+</pre>
+</div>
+
+<!-- ════════════ WHY MUMBLE MATTERS ════════════ -->
+<div class="cutout tilt-r">
+  <div class="tape tape-tl"></div>
+  <h3>¿Por Qué Mumble Importa para el SNH?</h3>
+  <table class="tbl" style="font-size:0.58rem;">
+    <tr><th>#</th><th>Propiedad</th><th>Detalle</th></tr>
+    <tr><td>1</td><td><b>Opus compartido</b></td><td>Tanto Mumble como WebRTC usan Opus. No hay conversión de codec necesaria.</td></tr>
+    <tr><td>2</td><td><b>Cifrado mandatorio</b></td><td>TLS para control, OCB-AES128 para voz. No existe modo sin cifrar.</td></tr>
+    <tr><td>3</td><td><b>TCP fallback nativo</b></td><td>Cuando UDP falla (NAT simétrico, Tor), Mumble tuneliza voz por TCP automáticamente. Lo que WebRTC resuelve con TURN, Mumble lo resuelve gratis.</td></tr>
+    <tr><td>4</td><td><b>Funciona sobre Tor</b></td><td>TCP tunnel sobre hidden services. WebRTC sobre Tor es problemático (ver §2.3).</td></tr>
+    <tr><td>5</td><td><b>Ya instalado</b></td><td>murmurd ya corre en el SNH (~10 MB RAM). Coste incremental: cero.</td></tr>
+  </table>
+
+  <div class="callout" style="margin-top:8px;">
+    ★ Mumble resuelve gratis (TCP fallback + Tor + cifrado) lo que WebRTC necesita TURN + configuración extra ★
+  </div>
+</div>
+
+<!-- ════════════ COMPARISON TABLE ════════════ -->
+<div class="cutout">
+  <h3>WebRTC vs. Mumble — Cara a Cara</h3>
+  <table class="tbl" style="font-size:0.58rem;">
+    <tr><th></th><th>WebRTC</th><th>Mumble</th></tr>
+    <tr><td><b>Función</b></td><td>Audio + vídeo + datos P2P</td><td>Audio VoIP (solo audio)</td></tr>
+    <tr><td><b>Codec audio</b></td><td>Opus (obligatorio)</td><td>Opus (desde 2013)</td></tr>
+    <tr><td><b>NAT traversal</b></td><td>ICE + STUN + TURN</td><td>TCP fallback automático</td></tr>
+    <tr><td><b>Tor</b></td><td>Problemático (UDP, leaks)</td><td>✔ TCP tunnel nativo</td></tr>
+    <tr><td><b>Cifrado</b></td><td>DTLS + SRTP (obligatorio)</td><td>TLS + OCB-AES128 (obligatorio)</td></tr>
+    <tr><td><b>Vídeo</b></td><td>✔ VP8/H.264</td><td>✘ Solo audio</td></tr>
+    <tr><td><b>DataChannels</b></td><td>✔ SCTP sobre DTLS</td><td>✘ Solo texto por TCP control</td></tr>
+    <tr><td><b>En el SNH</b></td><td>Requiere instalar lib</td><td>Ya instalado (murmurd :64738)</td></tr>
+  </table>
+  <div class="tip">No son excluyentes: la Arq. 3 (★ 1ª prioridad) <b>combina ambos</b> — Mumble para audio, WebRTC/go2rtc para vídeo. Ver <a href="poster-arq3.html">poster Arq. 3</a>.</div>
+</div>
+
+<!-- ════════════ PIPELINE PER TRACK ════════════ -->
+<div class="cutout tilt-l">
+  <h3>Pipeline de Transmisión por Pista</h3>
+  <table class="tbl" style="font-size:0.58rem;">
+    <tr><th>Pista</th><th>Captura</th><th>Codec</th><th>Unidad</th><th>Protocolo</th></tr>
+    <tr><td><b>Datos</b></td><td>Texto/JSON (formulario HTML)</td><td>N/A</td><td>Mensajes SCTP ≤256 KB</td><td>SCTP sobre DTLS</td></tr>
+    <tr><td><b>Audio</b></td><td>ffmpeg -f alsa/pulse (mic)</td><td>Opus 48 kHz</td><td>Paquetes RTP 20 ms (~160 B)</td><td>SRTP sobre DTLS</td></tr>
+    <tr><td><b>Vídeo</b></td><td>ffmpeg -f v4l2 (cámara)</td><td>VP8 o H.264 HW</td><td>Paquetes RTP ~1200 B</td><td>SRTP sobre DTLS</td></tr>
+    <tr><td><b>Archivos</b></td><td>Buffer desde disco</td><td>N/A</td><td>Chunks binarios DataChannel</td><td>SCTP (fiable, ordenado)</td></tr>
+  </table>
+  <div class="warn">La captura varía según CSI/USB — ver <a href="poster-csi-usb.html">CSI vs. USB</a> y <a href="spec-csi-usb/pipeline.html">spec pipeline</a>.</div>
+</div>
+
+<!-- ════════════ NAVIGATION ════════════ -->
+<div class="cutout" style="text-align:center;">
+  <h3>☞ Continúa Explorando</h3>
+  <a class="deep-link" href="poster-ecosistema.html">Ecosistema — Librerías &amp; Servidores (todas las opciones)</a><br>
+  <a class="deep-link" href="poster-retransmision.html">Retransmisión al Navegador — MJPEG, HLS, sin JS</a><br>
+  <a class="deep-link" href="poster-decision.html">Matriz de Decisión — ¿qué arquitectura elegir?</a><br>
+  <a class="deep-link" href="poster-glosario.html">Glosario — 40 términos</a>
+</div>
+
+<!-- ════════════ KEYWORDS ════════════ -->
+<div class="cutout" style="text-align:center;">
+  <span class="kw">SDP</span>
+  <span class="kw-inv">ICE</span>
+  <span class="kw">STUN</span>
+  <span class="kw-inv">TURN</span>
+  <span class="kw">DTLS</span>
+  <span class="kw-inv">SRTP</span>
+  <span class="kw">SCTP</span>
+  <span class="kw-inv">Opus</span>
+  <span class="kw">Mumble</span>
+  <span class="kw-inv">OCB-AES128</span>
+  <span class="kw">Protobuf</span>
+  <span class="kw-inv">DataChannel</span>
+</div>
+
+<footer class="footer">
+  Protocolos: WebRTC &amp; Mumble · SSB-WebRTC · Solar Net Hub ·
+  Fuente: web-rtc.md §1.1–§1.5 + §1.7
+</footer>
+
+</body>
+</html>

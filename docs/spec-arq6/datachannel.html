@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SPEC · node-datachannel — DataChannels P2P</title>
+<link rel="stylesheet" href="../poster-template/fanzine.css">
+</head>
+<body>
+
+<div class="nav-back">
+  <a href="../poster-arq6.html">◀ VOLVER AL POSTER</a> · SPEC · NODE-DATACHANNEL
+</div>
+
+<header class="header" style="padding:18px 10px 14px;">
+  <div class="stamp">P2P</div>
+  <h1 style="font-size:1.6rem;">node-datachannel</h1>
+  <div class="sub">DataChannels WebRTC sin media — solo datos</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ═══ KEY CONCEPT ═══ -->
+<div class="cutout">
+  <h3>Key Concept: DataChannels ≠ Media</h3>
+  <div class="key-concept">
+    En Arq. 6, <b>node-datachannel no transporta audio ni vídeo</b>. El audio va por Mumble y el vídeo por µStreamer MJPEG. node-datachannel se usa <b>solo para datos</b>: mensajes de texto (chat P2P), transferencia de archivos, y señalización entre peers SSB.
+  </div>
+
+  <table class="tbl" style="margin-top:8px;">
+    <tr><th>Tipo de datos</th><th>Transporte</th><th>Componente</th></tr>
+    <tr><td><b>Vídeo</b></td><td>HTTP MJPEG (µStreamer)</td><td>µStreamer → Oasis proxy</td></tr>
+    <tr><td><b>Audio</b></td><td>Mumble protocol + HTTP OGG bridge</td><td>murmurd → bridge</td></tr>
+    <tr><td><b>Texto/chat</b></td><td><b>WebRTC DataChannel (P2P)</b></td><td><b>node-datachannel</b></td></tr>
+    <tr><td><b>Archivos</b></td><td><b>WebRTC DataChannel (P2P)</b></td><td><b>node-datachannel</b></td></tr>
+    <tr><td><b>Señalización</b></td><td><b>WebRTC DataChannel o SSB feed</b></td><td><b>node-datachannel / SSB</b></td></tr>
+  </table>
+</div>
+
+<!-- ═══ IDENTITY ═══ -->
+<div class="cutout tilt-r">
+  <h3>Identidad del Componente</h3>
+  <table class="tbl">
+    <tr><th>Campo</th><th>Valor</th></tr>
+    <tr><td>npm</td><td><span class="hl-box">node-datachannel</span></td></tr>
+    <tr><td>Repo</td><td>murat-dogan/node-datachannel</td></tr>
+    <tr><td>Binding de</td><td>libdatachannel (C/C++)</td></tr>
+    <tr><td>Autor libdatachannel</td><td>Paul-Louis Ageneau</td></tr>
+    <tr><td>Licencia</td><td>MPL-2.0 (libdatachannel) + MIT (bindings)</td></tr>
+    <tr><td>Incluye media</td><td>✘ No — solo DataChannels + signaling</td></tr>
+    <tr><td>RAM típica</td><td>~5–10 MB (integrado en proceso Node.js de Oasis)</td></tr>
+    <tr><td>Install</td><td><span class="hl-box">npm install node-datachannel</span></td></tr>
+  </table>
+</div>
+
+<!-- ═══ SIGNALING FLOW ═══ -->
+<div class="cutout">
+  <h3>Flujo de Señalización (SDP via SSB)</h3>
+<pre class="diagram">
+  PEER A (SNH)                                    PEER B (remote)
+      │                                               │
+      │  1. createPeerConnection()                     │
+      │  2. createDataChannel('chat')                  │
+      │  3. createOffer() → SDP offer                  │
+      │                                               │
+      │ ──── SDP offer via SSB msg ──────────────────▷│
+      │                                               │
+      │                     4. setRemoteDescription()  │
+      │                     5. createAnswer() → SDP    │
+      │                                               │
+      │◁──── SDP answer via SSB msg ──────────────────│
+      │                                               │
+      │  6. setRemoteDescription()                     │
+      │                                               │
+      │ ◀═══ ICE candidates (trickle via SSB) ═══════▷│
+      │                                               │
+      │ ◀══════ DataChannel OPEN ═══════════════════▷ │
+      │           texto · archivos · señalización      │
+</pre>
+
+  <div class="key-concept">
+    La señalización (SDP offer/answer + ICE candidates) viaja por <b>SSB feed messages</b>: cada peer publica su SDP como un mensaje SSB privado. No hace falta un signaling server WebSocket.
+  </div>
+</div>
+
+<!-- ═══ API PATTERNS ═══ -->
+<div class="cutout tilt-l">
+  <h3>API Patterns — node-datachannel</h3>
+
+  <div style="font-size:0.72rem;font-weight:bold;margin-bottom:4px;">Crear peer connection + datachannel</div>
+  <div class="cmd">const nodeDataChannel = require('node-datachannel');
+
+const peer = new nodeDataChannel.PeerConnection(
+  'PeerA', { iceServers: [] }  // sin STUN: solo LAN
+);
+
+const dc = peer.createDataChannel('chat');
+
+dc.onOpen(() =&gt; {
+  dc.sendMessage('hello from SNH');
+});
+
+dc.onMessage((msg) =&gt; {
+  console.log('received:', msg);
+});</div>
+
+  <div style="font-size:0.72rem;font-weight:bold;margin:10px 0 4px;">Generar SDP y publicar en SSB</div>
+  <div class="cmd">peer.onLocalDescription((sdp, type) =&gt; {
+  // Publicar en SSB como mensaje privado al peer
+  ssbClient.publish({
+    type: 'webrtc-sdp',
+    sdpType: type,     // 'offer' | 'answer'
+    sdp: sdp,
+    recps: [peerBId]   // privado
+  });
+});
+
+peer.onLocalCandidate((candidate, mid) =&gt; {
+  ssbClient.publish({
+    type: 'webrtc-ice',
+    candidate, mid,
+    recps: [peerBId]
+  });
+});</div>
+
+  <div style="font-size:0.72rem;font-weight:bold;margin:10px 0 4px;">Recibir SDP del otro peer (listener SSB)</div>
+  <div class="cmd">ssbClient.on('webrtc-sdp', (msg) =&gt; {
+  if (msg.value.content.sdpType === 'offer') {
+    peer.setRemoteDescription(
+      msg.value.content.sdp, 'offer'
+    );
+  } else {
+    peer.setRemoteDescription(
+      msg.value.content.sdp, 'answer'
+    );
+  }
+});
+
+ssbClient.on('webrtc-ice', (msg) =&gt; {
+  peer.addRemoteCandidate(
+    msg.value.content.candidate,
+    msg.value.content.mid
+  );
+});</div>
+</div>
+
+<!-- ═══ FILE TRANSFER ═══ -->
+<div class="cutout">
+  <h3>File Transfer via DataChannel</h3>
+
+  <div class="key-concept">
+    DataChannels soportan datos binarios. Para archivos grandes: chunk en bloques de ~16 KB (límite SCTP), enviar secuencialmente, reassemblar en destino.
+  </div>
+
+  <div class="cmd"><span class="comment">// Enviar fichero en chunks</span>
+const CHUNK = 16384; // 16 KB
+const buf = fs.readFileSync(filePath);
+
+dc.sendMessage(JSON.stringify({
+  type: 'file-meta',
+  name: path.basename(filePath),
+  size: buf.length
+}));
+
+for (let i = 0; i &lt; buf.length; i += CHUNK) {
+  dc.sendMessageBinary(buf.slice(i, i + CHUNK));
+}
+dc.sendMessage(JSON.stringify({ type: 'file-end' }));</div>
+
+  <div class="tip">Alternativa: Los archivos pueden viajar como <b>SSB blobs</b> (inmutables, content-addressed). DataChannel para archivos pequeños/urgentes; SSB blobs para archivos que deben persistir en el log.</div>
+</div>
+
+<!-- ═══ LAN vs REMOTE ═══ -->
+<div class="cutout tilt-r">
+  <h3>LAN vs Remoto — ICE Config</h3>
+
+  <table class="tbl">
+    <tr><th>Escenario</th><th>iceServers</th><th>Funciona</th><th>Nota</th></tr>
+    <tr><td><b>LAN directa</b></td><td>[] (vacío)</td><td>✔</td><td>mDNS / IP local directa</td></tr>
+    <tr><td>LAN con NAT simple</td><td>[STUN público]</td><td>✔</td><td>Reflexive candidates</td></tr>
+    <tr><td>Internet (simétric NAT)</td><td>[STUN + TURN]</td><td>⚠️</td><td>Necesita TURN relay</td></tr>
+    <tr><td><b>Tor</b></td><td>—</td><td>✘</td><td>ICE no funciona sobre Tor (UDP bloqueado)</td></tr>
+  </table>
+
+  <div class="warn"><b>DataChannels P2P no funcionan sobre Tor</b>. Para datos entre peers en Tor: usar <b>SSB replication</b> (TCP, compatible Tor). DataChannels solo para LAN o con STUN/TURN en clearnet.</div>
+
+  <div class="key-concept">
+    En Arq. 6 (solo LAN), <b>iceServers: []</b> es suficiente. Los peers están en la misma red, se ven directamente por IP.
+  </div>
+</div>
+
+<!-- ═══ MESSAGE FORMAT ═══ -->
+<div class="cutout">
+  <h3>Formato de Mensajes — Convención</h3>
+  <div class="cmd"><span class="comment">// Todos los mensajes DataChannel son JSON con campo 'type'</span>
+{ "type": "chat",      "text": "hola", "ts": 1711612800 }
+{ "type": "file-meta", "name": "foto.jpg", "size": 48230 }
+{ "type": "file-end" }
+{ "type": "ping" }
+{ "type": "pong", "rtt": 12 }
+{ "type": "status",    "video": true, "audio": true }</div>
+
+  <div class="tip"><b>DRY rule</b>: siempre JSON con campo <b>type</b>. Permite extensibilidad futura sin romper parsers existentes. Los chunks binarios de file-transfer son la única excepción (raw ArrayBuffer).</div>
+</div>
+
+<!-- ═══ KEYWORDS ═══ -->
+<div class="cutout" style="text-align:center;">
+  <h3>Keywords</h3>
+  <span class="kw">DataChannel</span>
+  <span class="kw-inv">SCTP</span>
+  <span class="kw">SDP</span>
+  <span class="kw">ICE</span>
+  <span class="kw-inv">libdatachannel</span>
+  <span class="kw">SSB feed</span>
+  <span class="kw">recps</span>
+  <span class="kw-inv">offer/answer</span>
+  <span class="kw">trickle ICE</span>
+  <span class="kw">16 KB chunk</span>
+  <span class="kw-inv">P2P</span>
+  <span class="kw">mDNS</span>
+</div>
+
+<footer class="footer">
+  SPEC SUB-FILE · node-datachannel · Arq. 6 Poster ·
+  Fuente: web-rtc.md §1 + ssb-webrtc/index.js
+</footer>
+
+</body>
+</html>

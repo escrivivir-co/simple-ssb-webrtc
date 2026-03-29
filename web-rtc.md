@@ -185,6 +185,10 @@ Si antes vimos que abundaban ejemplos de scripting-cliente, los servicios TypeSc
 
 #### 1.6.2 Librerías WebRTC en otros lenguajes (relevantes para §2.2)
 
+> 📎 **Extensión**: para ficha técnica de **RPi-WebRTC** (kclyu/rpi-webrtc-streamer) como proyecto C++ nativo CSI, ver [web-rtc-ext.md § EXT-3](./web-rtc-ext.md#ext-3-rpi-webrtc-ficha-técnica-del-proyecto).
+>
+> 📎 **Extensión**: para ficha técnica de **µStreamer** (pikvm/ustreamer) como servidor MJPEG ultraligero (C, ~5–15 MB RAM, CSI+USB, cero JS), ver [web-rtc-ext.md § EXT-9](./web-rtc-ext.md#ext-9-µstreamer-ficha-técnica-del-proyecto).
+
 La exploración de servidores media dedicados (§2.2) amplía el ecosistema más allá de Node.js. El equipo que decida la arquitectura debe conocer estas opciones:
 
 | Librería / Servidor | Lenguaje | Tipo | Estrellas | Licencia | DataChannels | Media | Notas |
@@ -325,6 +329,8 @@ Una solución pasa por:
 
 **Pipeline de transmisión por pista**:
 
+> 📎 **Extensión**: bifurcación del pipeline según cámara CSI vs. USB (comandos ffmpeg/rpicam-vid, auto-detección), ver [web-rtc-ext.md § EXT-2](./web-rtc-ext.md#ext-2-implicaciones-en-el-pipeline-de-captura).
+
 | Pista | Captura (origen) | Codec transporte | Unidad de transmisión | Protocolo |
 |---|---|---|---|---|
 | **Datos** | Texto/JSON desde formulario HTML | N/A | Mensajes SCTP (hasta 256 KB) | SCTP sobre DTLS |
@@ -423,6 +429,8 @@ Desacoplando esta capa del protocolo, quedan los dos elementos nítidos:
 
 ### 2.1 Alternativas de retransmisión HTML/CSS al navegador
 
+> 📎 **Extensión**: impacto de CSI vs. USB en CPU y latencia de cada técnica de retransmisión, ver [web-rtc-ext.md § EXT-4](./web-rtc-ext.md#ext-4-impacto-csiusb-en-21--retransmisión-al-navegador).
+
 La decisión pendiente: **¿cómo entrega el servidor Node.js audio y vídeo al navegador sin JavaScript?** Estas son las técnicas viables, con su soporte real a marzo 2026:
 
 #### Vídeo
@@ -518,7 +526,7 @@ La §2.1 asume que Node.js (Oasis) hace *todo*: recibe pistas WebRTC, decodifica
 | **RAM** | 1 GB LPDDR2 |
 | **Almacenamiento** | microSD (velocidad clase 10 típica) |
 | **Energía** | PiJuice BC7X (1820 mAh) + panel solar 22W — cada mW cuenta |
-| **Puerto cámara** | CSI (ribbon, interfaz nativa RPi) |
+| **Puerto cámara** | CSI (ribbon, interfaz nativa RPi) — 📎 ver [EXT-1: CSI vs. USB](./web-rtc-ext.md#ext-1-cámara-csi-vs-usb-ficha-técnica-comparativa) |
 | **Audio** | Jack 4 polos stereo (salida); mic: USB o HAT I²S |
 | **Red** | WiFi 802.11n, Ethernet 100Base-T, Tor (onion) |
 | **SO** | Yocto Poky 4.3.4 (MACHINE=raspberrypi3-64) → Docker → Debian Bookworm |
@@ -530,9 +538,13 @@ La §2.1 asume que Node.js (Oasis) hace *todo*: recibe pistas WebRTC, decodifica
 
 #### Los tres candidatos
 
+> 📎 **Extensión**: impacto de CSI/USB en cada arquitectura + nuevas Arq. 5 (RPi-WebRTC) y Arq. 6 (µStreamer + Mumble, ultra-ligera), ver [web-rtc-ext.md § EXT-5](./web-rtc-ext.md#ext-5-impacto-csiusb--rpi-webrtc-en-22--servidores-media-dedicados) y [EXT-10](./web-rtc-ext.md#ext-10-impacto-de-µstreamer-en-22--nueva-arq-6).
+
 Se han evaluado tres servidores media que cumplen: binario ARM64, sin dependencias pesadas, capaces de recibir un stream y re-servirlo en formatos consumibles sin JS.
 
 ##### A) go2rtc — "la navaja suiza"
+
+> 📎 **Extensión**: si solo se necesita MJPEG (sin HLS/RTSP/WebRTC), **µStreamer** es ×3–×4 más ligero en RAM. Ver [web-rtc-ext.md § EXT-10A](./web-rtc-ext.md#ext-10a-µstreamer-como-alternativa-a-go2rtc-para-mjpeg).
 
 | | |
 |---|---|
@@ -987,6 +999,8 @@ Oasis sirve `/var/www/stream/` como directorio estático. El navegador consume:
 
 #### Comparativa de arquitecturas
 
+> 📎 **Extensión**: matriz ampliada Camera × Arquitectura × Fase × Tor con scoring, ver [web-rtc-ext.md § EXT-7](./web-rtc-ext.md#ext-7-matriz-de-decisión-unificada). Nueva **Arq. 6 (µStreamer + Mumble)** ultra-ligera, ver [web-rtc-ext.md § EXT-10](./web-rtc-ext.md#ext-10-impacto-de-µstreamer-en-22--nueva-arq-6).
+
 | | Arq. 1: go2rtc | Arq. 2: MediaMTX | Arq. 3: Mumble hybrid (★★) | Arq. 4: ffmpeg→HLS |
 |---|---|---|---|---|
 | **Complejidad** | Baja | Media | Media | Mínima |
@@ -1019,6 +1033,8 @@ Esto convierte a Mumble de "opción complementaria" a **componente estratégico*
 - **Audio**: Mumble (murmurd ya instalado) con bridge HTTP para consumo en `<audio>` + enlace `mumble://` para experiencia nativa.
 - **Vídeo**: go2rtc para Fase 1–2 (MJPEG/HLS sin JS); evaluar MediaMTX si se necesita CSI zero-copy.
 - **Datos**: node-datachannel (DataChannel) para chat, archivos, señalización. Invariable en todas las arquitecturas.
+
+> 📎 **Extensión**: para escenarios solo-LAN donde RAM es crítica, existe **Arq. 6 (µStreamer + Mumble)** con ~10–20 MB de RAM nueva — la más ligera evaluada. Ver [web-rtc-ext.md § EXT-10B](./web-rtc-ext.md#ext-10b-arquitectura-6--µstreamer--mumble-ultra-ligera).
 
 > **Nota DRY**: la integración concreta de go2rtc o MediaMTX en el pipeline de Oasis — Dockerfile, supervisord/systemd, configuración de red — se documentará en [PLAN_OASIS.md](./PLAN_OASIS.md) cuando se decida la arquitectura final.
 
@@ -1078,6 +1094,8 @@ Resumen ejecutivo (detalle completo en [PLAN_OASIS.md](./PLAN_OASIS.md)):
 La implementación depende de la **decisión arquitectónica de §2.2**. Se presentan tres caminos:
 
 #### Camino A: node-datachannel + ffmpeg (plan original)
+
+> 📎 **Extensión**: deltas CSI/USB por camino + nuevos Camino D (RPi-WebRTC) y Camino E (µStreamer + Mumble) + script `hardware_detect.js` (Fase 0), ver [web-rtc-ext.md § EXT-6](./web-rtc-ext.md#ext-6-impacto-en-3--implementación-caminos-a-b-c--nuevo-camino-d).
 
 | Fase | Alcance | Ficheros clave |
 |---|---|---|
@@ -1186,6 +1204,8 @@ La implementación depende de la **decisión arquitectónica de §2.2**. Se pres
 ---
 
 ## 4. Glosario
+
+> 📎 **Extensión**: 17 términos adicionales (CSI-2, UVC, MMAL, libcamera, rpicam-vid, V4L2 M2M, µStreamer, memsink, PiKVM…), ver [web-rtc-ext.md § EXT-8](./web-rtc-ext.md#ext-8-extensión-del-glosario-4).
 
 | Sigla | Nombre completo | Función en una línea |
 |---|---|---|

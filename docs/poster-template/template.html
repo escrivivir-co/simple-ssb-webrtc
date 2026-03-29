@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{TITLE}}</title>
+<link rel="stylesheet" href="fanzine.css">
+<!-- Poster-specific overrides (optional):
+<link rel="stylesheet" href="my-poster.css">
+-->
+</head>
+<body>
+
+<!-- ════════════ HEADER ════════════ -->
+<header class="header">
+  <div class="stamp">{{STAMP}}</div>
+  <h1>{{POSTER_NAME}}</h1>
+  <div class="sub">{{SUBTITLE}}</div>
+  <div class="sub2">{{DESCRIPTION}}</div>
+  <div class="issue">{{SOURCE_REF}}</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ════════════ SPEC INDEX (deep-dive sub-files) ════════════ -->
+<div class="cutout" style="text-align:center;">
+  <h3>☞ Deep-Dive Specs</h3>
+  <!-- <a class="deep-link" href="spec/component-a.html">Component A — details</a><br> -->
+  <!-- <a class="deep-link" href="spec/component-b.html">Component B — details</a><br> -->
+</div>
+
+<!-- ════════════ STATS BAR ════════════ -->
+<div class="stats-bar tilt-r">
+  <div class="stat"><span class="val">—</span><span class="lbl">Stat 1</span></div>
+  <div class="stat"><span class="val">—</span><span class="lbl">Stat 2</span></div>
+  <div class="stat"><span class="val">—</span><span class="lbl">Stat 3</span></div>
+  <div class="stat"><span class="val">—</span><span class="lbl">Stat 4</span></div>
+  <div class="stat"><span class="val">—</span><span class="lbl">Stat 5</span></div>
+</div>
+
+<!-- ════════════ ARCHITECTURE DIAGRAM ════════════ -->
+<div class="cutout diagram-wrap">
+  <div class="tape tape-tl"></div>
+  <div class="tape tape-tr"></div>
+  <h2>☞ Esquema de Arquitectura</h2>
+<pre class="diagram">
+ ┌──────────────────────────────────────────────┐
+ │         {{DEVICE}}                            │
+ │                                              │
+ │  (paste your ASCII diagram here)             │
+ │                                              │
+ └──────────────────────────────────────────────┘
+</pre>
+</div>
+
+<!-- ════════════ CALLOUT ════════════ -->
+<div class="callout tilt-l">
+  {{ONE-LINE TAGLINE}}
+</div>
+
+<!-- ════════════ TWO COLUMNS ════════════ -->
+<div class="cols">
+
+  <div class="col">
+    <div class="cutout tilt-l">
+      <div class="tape tape-tr"></div>
+      <h3>Componentes</h3>
+
+      <div class="card">
+        <div class="card-title">Component A</div>
+        <div class="card-port">:PORT</div>
+        <div class="card-body">
+          Key facts here<br>
+          Install: <span class="hl-box">command</span>
+        </div>
+      </div>
+
+      <!-- Collapsible detail inside a card -->
+      <details>
+        <summary>Component A — deep detail</summary>
+        <div class="detail-body">
+          Extended info, config snippets, tips...
+          <div class="cmd"><span class="prompt">example command</span></div>
+        </div>
+      </details>
+
+      <div class="card">
+        <div class="card-title">Component B</div>
+        <div class="card-port">:PORT</div>
+        <div class="card-body">Key facts here</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="cutout tilt-r">
+      <div class="tape tape-tl"></div>
+      <h3>Ficha Rápida</h3>
+      <table class="tbl">
+        <tr><th>Propiedad</th><th>Estado</th></tr>
+        <tr><td>Feature 1</td><td class="check">✔</td></tr>
+        <tr><td>Feature 2</td><td class="check">✘</td></tr>
+        <!-- ... -->
+      </table>
+    </div>
+
+    <div class="cutout tilt-l2" style="margin-top:12px;">
+      <h3>¿Cuándo Elegir?</h3>
+      <div style="font-size:0.7rem;">
+        <b>✔ SÍ cuando:</b><br>
+        · Condition A<br>
+        · Condition B<br><br>
+        <b>✘ NO cuando:</b><br>
+        · Condition C → <b>Alternative</b><br>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════ SETUP ════════════ -->
+<div class="cutout tilt-r2">
+  <div class="tape tape-tl"></div>
+  <div class="tape tape-br"></div>
+  <h3>☞ Setup Técnico</h3>
+
+  <div class="step-title">1. INSTALL</div>
+  <div class="cmd"><span class="prompt">install-command</span></div>
+
+  <details>
+    <summary>Step 1 — extended options</summary>
+    <div class="detail-body">
+      Alternative install methods, compile from source, etc.
+      <div class="cmd"><span class="prompt">alt command</span></div>
+    </div>
+  </details>
+
+  <div class="step-title">2. CONFIGURE</div>
+  <div class="cmd"><span class="comment"># config file</span>
+key: value</div>
+
+  <div class="step-title">3. RUN</div>
+  <div class="cmd"><span class="prompt">start-command</span></div>
+</div>
+
+<div class="washi"></div>
+
+<!-- ════════════ COMPARISON TABLE (optional) ════════════ -->
+<div class="cutout tilt-l">
+  <h3>Comparativa</h3>
+  <table class="tbl">
+    <tr><th></th><th>Option A</th><th>Option B</th></tr>
+    <tr><td>Metric</td><td>Value</td><td>Value</td></tr>
+  </table>
+</div>
+
+<!-- ════════════ KEYWORDS ════════════ -->
+<div class="cutout" style="text-align:center;">
+  <h3>Keywords</h3>
+  <span class="kw">keyword-1</span>
+  <span class="kw-inv">keyword-2</span>
+  <span class="kw">keyword-3</span>
+</div>
+
+<!-- ════════════ FOOTER ════════════ -->
+<footer class="footer">
+  {{DEVICE}} · {{STACK}} · {{DATE}} · {{SOURCE}}
+</footer>
+
+</body>
+</html>

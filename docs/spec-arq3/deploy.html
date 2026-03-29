@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SPEC · Deploy & Ops — Arq. 3</title>
+<link rel="stylesheet" href="../poster-template/fanzine.css">
+</head>
+<body>
+
+<div class="nav-back">
+  <a href="../poster-arq3.html">◀ VOLVER AL POSTER</a> · SPEC · DEPLOY
+</div>
+
+<header class="header" style="padding:18px 10px 14px;">
+  <div class="stamp">OPS</div>
+  <h1 style="font-size:1.8rem;">Deploy &amp; Ops</h1>
+  <div class="sub">systemd · Docker · monitoring · checklist</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ═══ STACK ═══ -->
+<div class="cutout">
+  <h3>Stack — Qué Corre Dónde</h3>
+<pre class="diagram">
+ ┌─────────────────────────────────────────────────────┐
+ │              RPi 3B — Yocto Poky 4.3.4              │
+ │              └─ Docker (Bookworm container)          │
+ │                                                      │
+ │  systemd                                             │
+ │  ├── murmurd.service      (:64738)  ← ya existente  │
+ │  ├── go2rtc.service       (:1984)   ← NUEVO         │
+ │  └── oasis.service        (:3000)   ← ya existente  │
+ │       └── audio-bridge    (interno)                  │
+ │       └── node-datachannel (interno)                 │
+ └─────────────────────────────────────────────────────┘
+</pre>
+</div>
+
+<!-- ═══ SYSTEMD ═══ -->
+<div class="cutout tilt-r">
+  <div class="tape tape-tl"></div>
+  <h3>go2rtc.service (NUEVO)</h3>
+  <div class="cmd"><span class="comment"># /etc/systemd/system/go2rtc.service</span>
+[Unit]
+Description=go2rtc media server
+After=network.target
+
+[Service]
+Type=simple
+User=video
+ExecStart=/usr/local/bin/go2rtc \
+    -config /etc/go2rtc/go2rtc.yaml
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target</div>
+
+  <div class="cmd"><span class="prompt">sudo systemctl daemon-reload</span>
+<span class="prompt">sudo systemctl enable --now go2rtc.service</span></div>
+
+  <div class="tip">Añadir <b>After=go2rtc.service mumble-server.service</b> en oasis.service para que el proxy arranque tras los upstreams.</div>
+</div>
+
+<!-- ═══ DOCKER ═══ -->
+<div class="cutout">
+  <h3>Docker — Integración</h3>
+  <div class="cmd"><span class="comment"># docker-compose.yml (fragmento)</span>
+services:
+  snh:
+    image: snh-bookworm:latest
+    devices:
+      - /dev/video0:/dev/video0    <span class="comment"># cámara</span>
+    ports:
+      - "3000:3000"    <span class="comment"># Oasis (único puerto público)</span>
+    volumes:
+      - mumble-data:/var/lib/mumble
+      - ./go2rtc.yaml:/etc/go2rtc/go2rtc.yaml:ro</div>
+
+  <div class="warn"><b>No exponer :1984 ni :64738</b> en ports. Solo :3000 sale al exterior.</div>
+</div>
+
+<!-- ═══ PRE-FLIGHT ═══ -->
+<div class="cutout tilt-l">
+  <div class="tape tape-tr"></div>
+  <h3>Pre-Flight Checklist</h3>
+  <table class="tbl">
+    <tr><th>#</th><th>Check</th><th>Comando</th><th>Esperado</th></tr>
+    <tr><td>1</td><td>Cámara detectada</td><td>v4l2-ctl --list-devices</td><td>/dev/video0</td></tr>
+    <tr><td>2</td><td>User en grupo video</td><td>groups</td><td>"video"</td></tr>
+    <tr><td>3</td><td>go2rtc binario</td><td>which go2rtc</td><td>/usr/local/bin/go2rtc</td></tr>
+    <tr><td>4</td><td>go2rtc.yaml válido</td><td>go2rtc -config ... (no crash)</td><td>Listening on :1984</td></tr>
+    <tr><td>5</td><td>MJPEG stream</td><td>curl -I localhost:1984/api/frame.mjpeg?src=solar-cam</td><td>200 + multipart</td></tr>
+    <tr><td>6</td><td>HLS playlist</td><td>curl -s localhost:1984/api/stream.m3u8?src=solar-cam | head</td><td>#EXTM3U</td></tr>
+    <tr><td>7</td><td>Snapshot</td><td>curl -o snap.jpg localhost:1984/api/frame.jpeg?src=solar-cam</td><td>JPEG válido</td></tr>
+    <tr><td>8</td><td>murmurd activo</td><td>ss -tlnp | grep 64738</td><td>LISTEN</td></tr>
+    <tr><td>9</td><td>Oasis activo</td><td>curl -I localhost:3000</td><td>200</td></tr>
+    <tr><td>10</td><td>Proxy video</td><td>curl -I localhost:3000/video</td><td>200 + multipart</td></tr>
+    <tr><td>11</td><td>Proxy HLS</td><td>curl -I localhost:3000/video.m3u8</td><td>200</td></tr>
+    <tr><td>12</td><td>RAM available</td><td>free -m | awk '/Mem/{print $7}'</td><td>&gt; 150 MB</td></tr>
+  </table>
+</div>
+
+<!-- ═══ MONITORING ═══ -->
+<div class="cutout">
+  <h3>Health Check Script</h3>
+  <div class="cmd"><span class="comment">#!/bin/bash — /usr/local/bin/snh-health.sh</span>
+
+<span class="comment"># Video: go2rtc alive?</span>
+curl -sf http://127.0.0.1:1984/api/streams &gt; /dev/null \
+  || systemctl restart go2rtc.service
+
+<span class="comment"># Audio: murmurd alive?</span>
+ss -tlnp | grep -q :64738 \
+  || systemctl restart mumble-server.service
+
+<span class="comment"># Oasis alive?</span>
+curl -sf http://127.0.0.1:3000/ &gt; /dev/null \
+  || systemctl restart oasis.service
+
+<span class="comment"># RAM check</span>
+FREE_MB=$(free -m | awk '/^Mem:/{print $7}')
+[ "$FREE_MB" -lt 100 ] &amp;&amp; \
+  logger -t snh-health -p warning "LOW RAM: ${FREE_MB}MB"</div>
+
+  <div class="cmd"><span class="comment"># crontab</span>
+*/5 * * * * /usr/local/bin/snh-health.sh 2&gt;&amp;1 | logger -t snh-health</div>
+</div>
+
+<!-- ═══ BOOT ORDER ═══ -->
+<div class="cutout tilt-r">
+  <h3>Boot Order</h3>
+<pre class="diagram">
+  [kernel modules]  (bcm2835-v4l2 si CSI)
+       ▼
+  [murmurd]  ← sin deps nuevas
+       │
+  [go2rtc]   ← After=network.target
+       │
+  [oasis]    ← After=go2rtc.service mumble-server.service
+       ├── audio-bridge
+       └── node-datachannel
+</pre>
+</div>
+
+<!-- ═══ LOGS ═══ -->
+<div class="cutout">
+  <h3>Logs — Comandos Útiles</h3>
+  <div class="cmd"><span class="prompt">journalctl -u go2rtc -f --no-pager</span>
+<span class="prompt">journalctl -u mumble-server -f --no-pager</span>
+<span class="prompt">journalctl -u oasis -f --no-pager</span>
+<span class="prompt">journalctl -t snh-health --since "1 hour ago"</span>
+<span class="prompt">free -m &amp;&amp; ps aux --sort=-%mem | head -10</span></div>
+</div>
+
+<!-- ═══ KEYWORDS ═══ -->
+<div class="cutout" style="text-align:center;">
+  <h3>Keywords</h3>
+  <span class="kw">systemd</span>
+  <span class="kw-inv">ExecStart</span>
+  <span class="kw">Docker</span>
+  <span class="kw">go2rtc.yaml</span>
+  <span class="kw-inv">health check</span>
+  <span class="kw">journalctl</span>
+  <span class="kw">crontab</span>
+  <span class="kw-inv">Yocto</span>
+  <span class="kw">Bookworm</span>
+  <span class="kw">free -m</span>
+</div>
+
+<footer class="footer">
+  SPEC SUB-FILE · Deploy &amp; Ops · Arq. 3 Poster ·
+  Fuente: web-rtc-ext.md EXT-5C + PLAN_OASIS.md
+</footer>
+
+</body>
+</html>

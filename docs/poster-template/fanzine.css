@@ -1,0 +1,405 @@
+/* ══════════════════════════════════════════════════════════
+   fanzine.css — Reusable fanzine B/W spec poster stylesheet
+   ──────────────────────────────────────────────────────────
+   Courier New · monocromo · estética recortable · A3 print
+   ══════════════════════════════════════════════════════════ */
+@page { size: A3 portrait; margin: 12mm; }
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: 'Courier New', Courier, monospace;
+  background: #fff;
+  color: #000;
+  padding: 24px;
+  max-width: 900px;
+  margin: 0 auto;
+  line-height: 1.35;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+/* ── cutout box (dashed outer border) ── */
+.cutout {
+  border: 2.5px solid #000;
+  padding: 14px 16px;
+  margin: 18px 0;
+  position: relative;
+  background: #fff;
+}
+.cutout::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border: 1.5px dashed #000;
+  pointer-events: none;
+}
+
+/* tape strips (decorative) */
+.tape {
+  position: absolute;
+  width: 60px; height: 18px;
+  background: rgba(0,0,0,0.07);
+  border: 1px solid #000;
+  z-index: 2;
+}
+.tape-tl { top: -10px; left: 18px;  transform: rotate(-3deg); }
+.tape-tr { top: -10px; right: 18px; transform: rotate(4deg); }
+.tape-bl { bottom: -10px; left: 22px; transform: rotate(2deg); }
+.tape-br { bottom: -10px; right: 20px; transform: rotate(-2deg); }
+
+/* ── HEADER ── */
+.header {
+  text-align: center;
+  padding: 28px 10px 18px;
+  border: 4px double #000;
+  margin-bottom: 6px;
+  position: relative;
+}
+.header h1 {
+  font-size: 2.8rem;
+  letter-spacing: 6px;
+  text-transform: uppercase;
+  transform: rotate(-1.2deg);
+  line-height: 1.1;
+}
+.header .sub {
+  font-size: 1.05rem;
+  margin-top: 8px;
+  letter-spacing: 2px;
+  transform: rotate(0.5deg);
+}
+.header .sub2 {
+  font-size: 0.78rem;
+  margin-top: 6px;
+  letter-spacing: 1px;
+  opacity: 0.7;
+}
+.stamp {
+  position: absolute;
+  top: 12px; right: 16px;
+  border: 3px solid #000;
+  padding: 4px 10px;
+  font-size: 0.7rem;
+  font-weight: bold;
+  transform: rotate(8deg);
+  letter-spacing: 1.5px;
+}
+.issue {
+  position: absolute;
+  bottom: 8px; left: 14px;
+  font-size: 0.6rem;
+  letter-spacing: 1px;
+  opacity: 0.5;
+}
+
+/* ── STATS BAR ── */
+.stats-bar {
+  display: flex;
+  justify-content: space-around;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0;
+  padding: 10px 6px;
+  border-top: 2px solid #000;
+  border-bottom: 2px solid #000;
+}
+.stat {
+  text-align: center;
+  flex: 1 1 100px;
+  min-width: 100px;
+}
+.stat .val {
+  font-size: 1.6rem;
+  font-weight: bold;
+  display: block;
+  line-height: 1.1;
+}
+.stat .lbl {
+  font-size: 0.6rem;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  display: block;
+  margin-top: 2px;
+  opacity: 0.7;
+}
+
+/* ── DIAGRAM (white-on-black <pre>) ── */
+.diagram-wrap h2 {
+  font-size: 1.1rem;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  transform: rotate(-0.6deg);
+}
+.diagram {
+  font-size: 0.68rem;
+  line-height: 1.28;
+  white-space: pre;
+  overflow-x: auto;
+  background: #000;
+  color: #fff;
+  padding: 14px 12px;
+  border: 2px solid #000;
+}
+
+/* ── COLUMNS ── */
+.cols {
+  display: flex;
+  gap: 16px;
+  margin: 14px 0;
+}
+.cols > .col { flex: 1; }
+@media (max-width: 640px) {
+  .cols { flex-direction: column; }
+}
+
+/* ── SECTION TITLES ── */
+h3 {
+  font-size: 0.85rem;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+  border-bottom: 2px solid #000;
+  padding-bottom: 4px;
+  margin-bottom: 10px;
+}
+
+/* ── CODE BLOCKS ── */
+.cmd {
+  font-size: 0.7rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: #f4f4f4;
+  border-left: 4px solid #000;
+  padding: 8px 10px;
+  margin: 8px 0;
+}
+.cmd .comment { opacity: 0.5; }
+.cmd .prompt::before { content: '$ '; font-weight: bold; }
+
+/* ── TABLE ── */
+.tbl {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.68rem;
+  margin: 8px 0;
+}
+.tbl th, .tbl td {
+  border: 1.5px solid #000;
+  padding: 5px 7px;
+  text-align: left;
+  vertical-align: top;
+}
+.tbl th {
+  background: #000;
+  color: #fff;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-size: 0.62rem;
+}
+.tbl .check { text-align: center; font-size: 0.9rem; }
+
+/* ── COMPONENT CARDS ── */
+.card {
+  border: 2px solid #000;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  position: relative;
+}
+.card .card-title {
+  font-weight: bold;
+  font-size: 0.82rem;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.card .card-body { font-size: 0.68rem; }
+.card .card-port {
+  position: absolute;
+  top: 6px; right: 8px;
+  font-size: 0.9rem;
+  font-weight: bold;
+  opacity: 0.3;
+}
+
+/* ── FOOTER ── */
+.footer {
+  text-align: center;
+  font-size: 0.58rem;
+  letter-spacing: 2px;
+  opacity: 0.45;
+  margin-top: 18px;
+  padding-top: 10px;
+  border-top: 1px solid #000;
+  text-transform: uppercase;
+}
+
+/* ── TILTS ── */
+.tilt-l  { transform: rotate(-0.8deg); }
+.tilt-r  { transform: rotate(0.7deg); }
+.tilt-l2 { transform: rotate(-1.5deg); }
+.tilt-r2 { transform: rotate(1.3deg); }
+
+/* ── CALLOUT (★ star box) ── */
+.callout {
+  border: 3px solid #000;
+  padding: 10px 14px;
+  text-align: center;
+  font-weight: bold;
+  font-size: 0.85rem;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin: 16px 0;
+  position: relative;
+}
+.callout::after {
+  content: '★';
+  position: absolute;
+  right: 12px; top: 50%;
+  transform: translateY(-50%);
+  font-size: 1.3rem;
+}
+.callout::before {
+  content: '★';
+  position: absolute;
+  left: 12px; top: 50%;
+  transform: translateY(-50%);
+  font-size: 1.3rem;
+}
+
+/* ── washi tape divider ── */
+.washi {
+  height: 8px;
+  background: repeating-linear-gradient(
+    90deg, #000 0px, #000 4px, transparent 4px, transparent 8px
+  );
+  margin: 8px 0;
+}
+
+/* ── highlight box (inverted) ── */
+.hl-box {
+  display: inline-block;
+  background: #000;
+  color: #fff;
+  padding: 2px 8px;
+  font-size: 0.72rem;
+  letter-spacing: 1px;
+  margin: 2px 0;
+}
+
+/* ── COLLAPSIBLE <details> ── */
+details {
+  margin: 8px 0;
+  border: 1.5px solid #000;
+  background: #fafafa;
+}
+details summary {
+  cursor: pointer;
+  padding: 6px 10px;
+  font-size: 0.72rem;
+  font-weight: bold;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  border-bottom: 1px dashed #000;
+  list-style: none;
+  position: relative;
+  padding-left: 22px;
+}
+details summary::before {
+  content: '▶';
+  position: absolute;
+  left: 8px; top: 7px;
+  font-size: 0.6rem;
+  transition: transform 0.15s;
+}
+details[open] summary::before {
+  transform: rotate(90deg);
+}
+details summary::-webkit-details-marker { display: none; }
+details .detail-body {
+  padding: 8px 12px;
+  font-size: 0.66rem;
+  line-height: 1.4;
+}
+details .detail-body .cmd { font-size: 0.64rem; }
+
+/* ── keyword tags ── */
+.kw {
+  display: inline-block;
+  border: 1.5px solid #000;
+  padding: 1px 6px;
+  font-size: 0.58rem;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin: 2px 3px;
+}
+.kw-inv {
+  display: inline-block;
+  background: #000;
+  color: #fff;
+  padding: 1px 6px;
+  font-size: 0.58rem;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin: 2px 3px;
+}
+
+/* ── tip / warning / key-concept boxes ── */
+.tip, .warn, .key-concept {
+  font-size: 0.66rem;
+  padding: 6px 10px 6px 28px;
+  margin: 6px 0;
+  position: relative;
+  border-left: 4px solid #000;
+}
+.tip::before    { content: '💡'; position: absolute; left: 6px; top: 5px; }
+.warn::before   { content: '⚠️'; position: absolute; left: 4px; top: 4px; }
+.key-concept { border-left: 4px solid #000; background: #f0f0f0; }
+.key-concept::before { content: '◆'; position: absolute; left: 8px; top: 6px; font-size: 0.7rem; }
+
+/* ── deep-dive link ── */
+.deep-link {
+  display: inline-block;
+  font-size: 0.62rem;
+  letter-spacing: 1px;
+  border-bottom: 1.5px solid #000;
+  text-decoration: none;
+  color: #000;
+  padding: 1px 0;
+  margin-top: 4px;
+}
+.deep-link:hover { background: #000; color: #fff; }
+.deep-link::before { content: '→ '; }
+
+/* ── back-to-poster nav (for spec sub-pages) ── */
+.nav-back {
+  font-size: 0.65rem;
+  padding: 8px 0;
+  border-bottom: 2px solid #000;
+  margin-bottom: 16px;
+}
+.nav-back a {
+  text-decoration: none;
+  color: #000;
+  border-bottom: 1.5px solid #000;
+  letter-spacing: 1px;
+}
+.nav-back a:hover { background: #000; color: #fff; }
+
+/* ── STEP numbering ── */
+.step-title {
+  font-size: 0.72rem;
+  font-weight: bold;
+  margin: 10px 0 6px;
+}
+
+/* ── print ── */
+@media print {
+  body { padding: 0; max-width: none; }
+  .cutout::before { border-color: #999; }
+  details { break-inside: avoid; }
+  details[open] .detail-body { break-inside: avoid; }
+}

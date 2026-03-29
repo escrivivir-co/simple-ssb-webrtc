@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SSB-WebRTC — Spec Posters</title>
+<link rel="stylesheet" href="poster-template/fanzine.css">
+<style>
+  body { max-width: 800px; margin: 0 auto; padding: 12px; }
+  .poster-card {
+    border: 2px solid #111;
+    padding: 14px 16px;
+    margin-bottom: 18px;
+    position: relative;
+  }
+  .poster-card h2 { margin: 0 0 4px; font-size: 1.1rem; }
+  .poster-card .meta { font-size: 0.7rem; opacity: 0.6; margin-bottom: 10px; }
+  .poster-card a.main-link {
+    display: inline-block;
+    font-weight: bold;
+    font-size: 0.85rem;
+    background: #111;
+    color: #fff;
+    padding: 4px 10px;
+    text-decoration: none;
+    margin-bottom: 10px;
+  }
+  .poster-card a.main-link:hover { background: #444; }
+  .spec-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+  }
+  .spec-list a {
+    font-size: 0.68rem;
+    border: 1px solid #111;
+    padding: 3px 7px;
+    text-decoration: none;
+    color: #111;
+    white-space: nowrap;
+  }
+  .spec-list a:hover { background: #111; color: #fff; }
+  .badge {
+    position: absolute;
+    top: -10px;
+    right: 10px;
+    background: #111;
+    color: #fff;
+    font-size: 0.6rem;
+    padding: 2px 8px;
+    font-weight: bold;
+    letter-spacing: 0.08em;
+  }
+  .divider { border: none; border-top: 2px solid #111; margin: 24px 0; }
+  .index-footer {
+    font-size: 0.65rem;
+    text-align: center;
+    opacity: 0.5;
+    margin-top: 24px;
+  }
+</style>
+</head>
+<body>
+
+<header class="header" style="margin-bottom:18px;">
+  <div class="stamp">SPECS</div>
+  <h1 style="font-size:1.6rem;">SSB · WebRTC · Oasis</h1>
+  <div class="sub">Solar Net Hub — Architecture Spec Posters</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ═══ DECISION MATRIX ═══ -->
+<div class="poster-card" style="border-width:3px;">
+  <div class="badge" style="background:#111;font-size:0.65rem;">★ EMPIEZA AQUÍ</div>
+  <div class="tape tape-tr"></div>
+
+  <h2>Matriz de Decisión — 6 Arquitecturas</h2>
+  <div class="meta">CSI / USB × Fase × Tor × RAM — ¿Qué arquitectura elegir?</div>
+
+  <a class="main-link" href="poster-decision.html">☞ VER MATRIZ COMPLETA</a>
+
+  <div style="font-size:0.68rem;margin-top:6px;">Árbol de decisión, ranking por prioridad, tabla Cámara × Fase, comparativa de las 6 arquitecturas. Punto de entrada al sitio.</div>
+</div>
+
+<!-- ═══ PROTOCOLO ═══ -->
+<div class="poster-card tilt-r">
+  <div class="badge">§1.1–1.5</div>
+  <div class="tape tape-tl"></div>
+
+  <h2>Protocolos: WebRTC &amp; Mumble</h2>
+  <div class="meta">SDP, ICE, STUN, TURN, DTLS, SRTP — cómo viajan datos, audio y vídeo</div>
+
+  <a class="main-link" href="poster-protocolo.html">☞ VER POSTER COMPLETO</a>
+
+  <div style="font-size:0.68rem;margin-top:6px;">Ficha técnica de pila WebRTC (7 capas), flujo SDP, descubrimiento ICE, diagramas STUN/TURN, pila Mumble (7 capas), flujo de conexión Mumble, comparativa WebRTC vs Mumble.</div>
+</div>
+
+<!-- ═══ ECOSISTEMA ═══ -->
+<div class="poster-card tilt-l">
+  <div class="badge">§1.6</div>
+  <div class="tape tape-tr"></div>
+
+  <h2>Ecosistema: Librerías &amp; Servidores</h2>
+  <div class="meta">Node.js, Go, C, C++, Python — mapa completo de herramientas WebRTC</div>
+
+  <a class="main-link" href="poster-ecosistema.html">☞ VER POSTER COMPLETO</a>
+
+  <div style="font-size:0.68rem;margin-top:6px;">14 librerías/servidores comparados: node-datachannel, werift, mediasoup, LiveKit, Pion, go2rtc, MediaMTX, Janus… Mapa de decisión, comparativas P2P y SFU, alternativas evaluadas.</div>
+</div>
+
+<hr class="divider">
+
+<!-- ═══ CSI vs USB ═══ -->
+<div class="poster-card">
+  <div class="badge">HARDWARE</div>
+  <div class="tape tape-tl"></div>
+
+  <h2>CSI vs. USB — Cámaras en el SNH</h2>
+  <div class="meta">Hardware, pipeline, encoder H.264 HW, Docker — qué cambia según la cámara</div>
+
+  <a class="main-link" href="poster-csi-usb.html">☞ VER POSTER COMPLETO</a>
+
+  <div style="font-size:0.68rem;font-weight:bold;margin-bottom:4px;">Specs técnicas:</div>
+  <div class="spec-list">
+    <a href="spec-csi-usb/pipeline.html">Pipeline &amp; Comandos — ffmpeg, rpicam-vid, autodetección</a>
+    <a href="spec-csi-usb/impact.html">Impacto por Arquitectura — go2rtc, MediaMTX, µStreamer, configs</a>
+  </div>
+</div>
+
+<!-- ═══ RETRANSMISIÓN ═══ -->
+<div class="poster-card tilt-l">
+  <div class="badge">§2.1</div>
+  <div class="tape tape-tr"></div>
+
+  <h2>Retransmisión al Navegador — Sin JS</h2>
+  <div class="meta">MJPEG, HLS, OGG/Opus, WAV — cómo entregar media con HTML puro</div>
+
+  <a class="main-link" href="poster-retransmision.html">☞ VER POSTER COMPLETO</a>
+
+  <div style="font-size:0.68rem;margin-top:6px;">4 técnicas vídeo + 4 audio, mapa de latencia, estrategia dual MJPEG/HLS por fase, matriz browser/codec, paquetes npm.</div>
+</div>
+
+<hr class="divider">
+
+<!-- ═══ ARQ. 1 ═══ -->
+<div class="poster-card">
+  <div class="badge">ARQ. 1 · 2ª PRIORIDAD</div>
+  <div class="tape tape-tl"></div>
+
+  <h2>go2rtc — relay integral</h2>
+  <div class="meta">V4L2 + ALSA directo · CSI + USB · ~20–40 MB RAM · MJPEG + HLS sin ffmpeg</div>
+
+  <a class="main-link" href="poster-arq1.html">☞ VER POSTER COMPLETO</a>
+
+  <div style="font-size:0.68rem;font-weight:bold;margin-bottom:4px;">Specs técnicas:</div>
+  <div class="spec-list">
+    <a href="spec-arq1/go2rtc.html">go2rtc — config, API, endpoints, transcodificación</a>
+    <a href="spec-arq1/deploy.html">Deploy &amp; Ops — systemd, Docker, detección CSI/USB, fallback</a>
+  </div>
+</div>
+
+<!-- ═══ ARQ. 2 ═══ -->
+<div class="poster-card tilt-l">
+  <div class="badge">ARQ. 2 · CSI ZERO-COPY</div>
+  <div class="tape tape-tr"></div>
+
+  <h2>MediaMTX + rpicam → HLS/WebRTC auto-conversión</h2>
+  <div class="meta">CSI zero-copy · Go binario · ~15–30 MB RAM · RTSP→HLS→WebRTC auto</div>
+
+  <a class="main-link" href="poster-arq2.html">☞ VER POSTER COMPLETO</a>
+
+  <div style="font-size:0.68rem;font-weight:bold;margin-bottom:4px;">Specs técnicas:</div>
+  <div class="spec-list">
+    <a href="spec-arq2/mediamtx.html">MediaMTX — config, API, rpicam, auto-conversión</a>
+    <a href="spec-arq2/deploy.html">Deploy &amp; Ops — systemd, Docker, detección CSI/USB, fallback</a>
+  </div>
+</div>
+
+<hr class="divider">
+
+<!-- ═══ ARQ. 3 ═══ -->
+<div class="poster-card tilt-r">
+  <div class="badge">ARQ. 3 · 1ª PRIORIDAD</div>
+  <div class="tape tape-tl"></div>
+
+  <h2>go2rtc + Mumble + node-datachannel</h2>
+  <div class="meta">General purpose · LAN + Remoto + Tor · ~65 MB RAM · HLS + MJPEG</div>
+
+  <a class="main-link" href="poster-arq3.html">☞ VER POSTER COMPLETO</a>
+
+  <div style="font-size:0.68rem;font-weight:bold;margin-bottom:4px;">Specs técnicas:</div>
+  <div class="spec-list">
+    <a href="spec-arq3/go2rtc.html">go2rtc — config, endpoints, HLS, WHEP</a>
+    <a href="spec-arq3/mumble-bridge.html">Mumble bridge — audio bidireccional</a>
+    <a href="spec-arq3/oasis-proxy.html">Oasis proxy — rutas, CSP, templates</a>
+    <a href="spec-arq3/datachannel.html">node-datachannel — P2P, SDP via SSB</a>
+    <a href="spec-arq3/deploy.html">Deploy &amp; Ops — systemd, Docker, checklist</a>
+  </div>
+</div>
+
+<!-- ═══ ARQ. 6 ═══ -->
+<div class="poster-card tilt-l">
+  <div class="badge">ARQ. 6 · 1ª BIS · SOLO LAN</div>
+  <div class="tape tape-tr"></div>
+
+  <h2>µStreamer + Mumble + node-datachannel</h2>
+  <div class="meta">Ultra-ligera · Solo LAN · ~10–20 MB RAM · MJPEG only</div>
+
+  <a class="main-link" href="poster-arq6.html">☞ VER POSTER COMPLETO</a>
+
+  <div style="font-size:0.68rem;font-weight:bold;margin-bottom:4px;">Specs técnicas:</div>
+  <div class="spec-list">
+    <a href="spec-arq6/ustreamer.html">µStreamer — CLI, encoders, V4L2 M2M</a>
+    <a href="spec-arq6/mumble-bridge.html">Mumble bridge — audio bidireccional</a>
+    <a href="spec-arq6/oasis-proxy.html">Oasis proxy — rutas, CSP, templates</a>
+    <a href="spec-arq6/datachannel.html">node-datachannel — P2P, SDP via SSB</a>
+    <a href="spec-arq6/deploy.html">Deploy &amp; Ops — systemd, Docker, checklist</a>
+  </div>
+</div>
+
+<!-- ═══ ARQ. 5 ═══ -->
+<div class="poster-card">
+  <div class="badge">ARQ. 5 · SOLO CSI · WebRTC NATIVO</div>
+  <div class="tape tape-tl"></div>
+
+  <h2>RPi-WebRTC + node-datachannel + proxy HTTP</h2>
+  <div class="meta">WebRTC nativo C++ · Solo CSI · P2P real ~100 ms · ~80–100 MB RAM</div>
+
+  <a class="main-link" href="poster-arq5.html">☞ VER POSTER COMPLETO</a>
+
+  <div style="font-size:0.68rem;font-weight:bold;margin-bottom:4px;">Specs técnicas:</div>
+  <div class="spec-list">
+    <a href="spec-arq5/rpi-webrtc.html">RPi-WebRTC — compilación, MMAL/libcamera, señalización</a>
+    <a href="spec-arq5/media-proxy.html">Media Proxy — consumer WebRTC→MJPEG/OGG, rutas</a>
+    <a href="spec-arq5/deploy.html">Deploy &amp; Ops — cross-compile, systemd, fallback</a>
+  </div>
+</div>
+
+<!-- ═══ ARQ. 4 ═══ -->
+<div class="poster-card tilt-l">
+  <div class="badge">ARQ. 4 · BASELINE</div>
+  <div class="tape tape-tr"></div>
+
+  <h2>ffmpeg → HLS estático</h2>
+  <div class="meta">La más simple posible · ffmpeg → .ts → Oasis static · ~30 MB RAM · 4–12 s latencia</div>
+
+  <a class="main-link" href="poster-arq4.html">☞ VER POSTER COMPLETO</a>
+
+  <div style="font-size:0.68rem;margin-top:6px;">Comando ffmpeg, parámetros HLS, variantes CSI/USB, tmpfs para SD, comparativa, riesgos. Zero-infra: nada nuevo que instalar.</div>
+</div>
+
+<hr class="divider">
+
+<!-- ═══ GLOSARIO ═══ -->
+<div class="poster-card">
+  <div class="badge">A–Z</div>
+  <div class="tape tape-tr"></div>
+
+  <h2>Glosario — 40 Términos</h2>
+  <div class="meta">WebRTC, señalización, vídeo, audio, hardware, seguridad — todo en una página</div>
+
+  <a class="main-link" href="poster-glosario.html">☞ VER GLOSARIO</a>
+
+  <div style="font-size:0.68rem;margin-top:6px;">SDP · ICE · STUN · TURN · DTLS · SRTP · MJPEG · HLS · CSI-2 · UVC · V4L2 · ALSA · murmurd · gumble · µStreamer · memsink …</div>
+</div>
+
+<hr class="divider">
+
+<!-- ═══ CONTEXTO ═══ -->
+<div class="cutout" style="font-size:0.72rem;">
+  <h3>Contexto</h3>
+  <table class="tbl">
+    <tr><th>Device</th><td>RPi 3B · BCM2837 · 1 GB LPDDR2 · VideoCore IV</td></tr>
+    <tr><th>OS stack</th><td>Yocto Poky 4.3.4 → Docker → Debian Bookworm</td></tr>
+    <tr><th>Energía</th><td>Solar 22W</td></tr>
+    <tr><th>App</th><td>Oasis :3000 (Node.js / SSB) · cero JS en browser</td></tr>
+    <tr><th>Audio base</th><td>murmurd :64738 (Mumble) · ya instalado</td></tr>
+    <tr><th>Fuente</th><td>web-rtc-ext.md (1078 líneas · 10 secciones EXT)</td></tr>
+  </table>
+</div>
+
+<hr class="divider">
+
+<!-- ═══ DOCUMENTACIÓN FUENTE ═══ -->
+<div class="cutout" style="font-size:0.72rem;">
+  <h3>Documentación Fuente</h3>
+  <table class="tbl">
+    <tr><th>Documento</th><th>Descripción</th><th>Enlace</th></tr>
+    <tr>
+      <td><b>web-rtc.md</b></td>
+      <td>Plan teórico general — SDP, ICE, servidores media, 4 arquitecturas, 3 caminos de implementación</td>
+      <td><a href="https://github.com/escrivivir-co/simple-ssb-webrtc/blob/main/web-rtc.md">Ver en GitHub</a></td>
+    </tr>
+    <tr>
+      <td><b>web-rtc-ext.md</b></td>
+      <td>Extensión DRY — 10 secciones EXT: CSI/USB, RPi-WebRTC, µStreamer, matriz de decisión, glosario</td>
+      <td><a href="https://github.com/escrivivir-co/simple-ssb-webrtc/blob/main/web-rtc-ext.md">Ver en GitHub</a></td>
+    </tr>
+  </table>
+</div>
+
+<!-- ═══ PLANES ═══ -->
+<div class="cutout" style="font-size:0.72rem;">
+  <h3>Planes</h3>
+  <table class="tbl">
+    <tr><th>Plan</th><th>Descripción</th><th>Enlace</th></tr>
+    <tr>
+      <td><b>PLAN_OASIS.md</b></td>
+      <td>Integración WebRTC en Oasis — Dockerfile, systemd, rutas, CSRF, CSP, implementación concreta</td>
+      <td><a href="https://github.com/escrivivir-co/simple-ssb-webrtc/blob/main/PLAN_OASIS.md">Ver en GitHub</a></td>
+    </tr>
+  </table>
+</div>
+
+<p class="index-footer">
+  SSB-WebRTC Spec Posters · Solar Net Hub ·
+  <a href="https://github.com/escrivivir-co/simple-ssb-webrtc" style="color:inherit;">GitHub</a>
+</p>
+
+</body>
+</html>

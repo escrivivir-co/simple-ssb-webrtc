@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Glosario — SSB-WebRTC · Solar Net Hub</title>
+<link rel="stylesheet" href="poster-template/fanzine.css">
+<style>
+  .glos td:first-child { white-space: nowrap; font-weight: bold; width: 110px; }
+  .glos td:nth-child(2) { font-size: 0.6rem; opacity: 0.7; width: 170px; }
+  .glos td:nth-child(3) { font-size: 0.62rem; }
+  .cat-label {
+    background: #111; color: #fff; font-size: 0.6rem; font-weight: bold;
+    padding: 2px 8px; letter-spacing: 0.1em; display: inline-block; margin-bottom: 6px;
+  }
+</style>
+</head>
+<body>
+
+<!-- ════════════ HEADER ════════════ -->
+<header class="header">
+  <div class="stamp">A–Z</div>
+  <h1>Glosario</h1>
+  <div class="sub">40 términos · WebRTC · Video · Audio · Seguridad · Hardware</div>
+  <div class="issue">web-rtc.md §4 + web-rtc-ext.md EXT-8</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ════════════ STATS BAR ════════════ -->
+<div class="stats-bar tilt-r">
+  <div class="stat"><span class="val">24</span><span class="lbl">§4 base</span></div>
+  <div class="stat"><span class="val">16</span><span class="lbl">EXT-8</span></div>
+  <div class="stat"><span class="val">40</span><span class="lbl">total</span></div>
+  <div class="stat"><span class="val">5</span><span class="lbl">categorías</span></div>
+</div>
+
+<!-- ════════════ 1. WEBRTC & SEÑALIZACIÓN ════════════ -->
+<div class="cutout">
+  <div class="tape tape-tl"></div>
+  <span class="cat-label">WEBRTC &amp; SEÑALIZACIÓN</span>
+  <table class="tbl glos">
+    <tr><td>SDP</td><td>Session Description Protocol</td><td>Formato para negociar capacidades (codecs, IPs, fingerprints) entre peers</td></tr>
+    <tr><td>ICE</td><td>Interactive Connectivity Establishment</td><td>Descubre la mejor ruta de red entre dos peers</td></tr>
+    <tr><td>STUN</td><td>Session Traversal Utilities for NAT</td><td>Pregunta "cuál es mi IP pública" a un servidor externo</td></tr>
+    <tr><td>TURN</td><td>Traversal Using Relays around NAT</td><td>Relay de tráfico cuando la conexión directa es imposible</td></tr>
+    <tr><td>DTLS</td><td>Datagram Transport Layer Security</td><td>Handshake criptográfico sobre UDP (como TLS pero para datagramas)</td></tr>
+    <tr><td>SRTP</td><td>Secure Real-time Transport Protocol</td><td>Transporte cifrado de audio/vídeo</td></tr>
+    <tr><td>SCTP</td><td>Stream Control Transmission Protocol</td><td>Transporte de datos (DataChannels) sobre DTLS, fiable y/u ordenado</td></tr>
+    <tr><td>RTP</td><td>Real-time Transport Protocol</td><td>Paquetes de media con timestamps y números de secuencia</td></tr>
+    <tr><td>WHEP</td><td>WebRTC-HTTP Egress Protocol</td><td>Estándar IETF para consumir streams WebRTC vía HTTP sin señalización custom</td></tr>
+    <tr><td>WHIP</td><td>WebRTC-HTTP Ingestion Protocol</td><td>Estándar IETF para publicar streams WebRTC vía HTTP (complemento de WHEP)</td></tr>
+    <tr><td>SFU</td><td>Selective Forwarding Unit</td><td>Servidor que reenvía streams WebRTC sin decodificarlos (baja CPU, baja latencia)</td></tr>
+    <tr><td>MCU</td><td>Multipoint Control Unit</td><td>Servidor que decodifica, mezcla y re-codifica streams — alta CPU, baja complejidad cliente</td></tr>
+    <tr><td>BWE</td><td>Bandwidth Estimation</td><td>Algoritmo que estima el ancho de banda disponible para adaptar bitrate dinámicamente</td></tr>
+  </table>
+</div>
+
+<!-- ════════════ 2. VÍDEO & STREAMING ════════════ -->
+<div class="cutout tilt-l">
+  <div class="tape tape-tr"></div>
+  <span class="cat-label">VÍDEO &amp; STREAMING</span>
+  <table class="tbl glos">
+    <tr><td>MJPEG</td><td>Motion JPEG</td><td>Secuencia de JPEGs independientes; reproducible en &lt;img&gt; vía multipart/x-mixed-replace</td></tr>
+    <tr><td>HLS</td><td>HTTP Live Streaming</td><td>Protocolo de Apple: playlist .m3u8 + segmentos .ts. Nativo en Safari, Chrome 142+, Android</td></tr>
+    <tr><td>V4L2</td><td>Video4Linux 2</td><td>Framework del kernel Linux para captura de vídeo desde dispositivos (cámaras USB, CSI)</td></tr>
+    <tr><td>V4L2 M2M</td><td>Video4Linux 2 Memory-to-Memory</td><td>Interfaz del kernel para transformación de vídeo (ej. encode H.264 en GPU)</td></tr>
+    <tr><td>M2M</td><td>Memory-to-Memory encoder</td><td>Encoder V4L2 que toma frames de memoria y produce JPEG/H.264 vía GPU RPi</td></tr>
+    <tr><td>ISP</td><td>Image Signal Processor</td><td>Unidad GPU que procesa RAW Bayer: debayer, balance de blancos, exposición, noise reduction</td></tr>
+  </table>
+</div>
+
+<!-- ════════════ 3. HARDWARE & CÁMARAS ════════════ -->
+<div class="cutout tilt-r">
+  <div class="tape tape-tl"></div>
+  <span class="cat-label">HARDWARE &amp; CÁMARAS</span>
+  <table class="tbl glos">
+    <tr><td>CSI</td><td>Camera Serial Interface</td><td>Bus ribbon de la RPi para conectar cámaras nativas (sin USB, acceso directo GPU)</td></tr>
+    <tr><td>CSI-2</td><td>Camera Serial Interface 2 (MIPI)</td><td>Bus serie de alta velocidad entre sensor y SoC; 2 o 4 data lanes D-PHY</td></tr>
+    <tr><td>MIPI</td><td>Mobile Industry Processor Interface</td><td>Consorcio que define estándares CSI y DSI para cámaras y displays embebidos</td></tr>
+    <tr><td>D-PHY</td><td>Data Physical Layer (MIPI)</td><td>Capa física de CSI-2; señalización diferencial para data lanes y reloj</td></tr>
+    <tr><td>UVC</td><td>USB Video Class</td><td>Estándar USB para cámaras; plug-and-play sin driver propietario (uvcvideo en Linux)</td></tr>
+    <tr><td>FFC</td><td>Flat Flexible Cable</td><td>Cable ribbon para conectar cámaras CSI a los puertos 15-pin/22-pin de la RPi</td></tr>
+    <tr><td>hot-plug</td><td>(concepto)</td><td>Conectar/desconectar un dispositivo en caliente sin apagar el sistema; USB sí, CSI no</td></tr>
+    <tr><td>MMAL</td><td>Multi-Media Abstraction Layer</td><td>API legacy del VideoCore IV (RPi ≤4) para ISP y encoder H.264 HW; reemplazada por libcamera</td></tr>
+    <tr><td>libcamera</td><td>(nombre propio)</td><td>Framework de cámara moderno de Linux; abstrae ISP y sensores. No soporta cámaras USB</td></tr>
+    <tr><td>rpicam-vid</td><td>Raspberry Pi Camera Video</td><td>CLI de rpicam-apps para captura de vídeo desde cámaras CSI vía libcamera</td></tr>
+  </table>
+</div>
+
+<div class="washi"></div>
+
+<!-- ════════════ 4. AUDIO & MUMBLE ════════════ -->
+<div class="cutout">
+  <div class="tape tape-tl"></div>
+  <span class="cat-label">AUDIO &amp; MUMBLE</span>
+  <table class="tbl glos">
+    <tr><td>ALSA</td><td>Advanced Linux Sound Architecture</td><td>Framework del kernel Linux para captura y reproducción de audio</td></tr>
+    <tr><td>murmurd</td><td>Mumble Server Daemon</td><td>Servidor Mumble: canales, ACLs, usuarios, mezcla y retransmite audio Opus cifrado</td></tr>
+    <tr><td>OCB-AES128</td><td>Offset Codebook Mode (AES-128)</td><td>Cifrado autenticado (AEAD) usado por Mumble voice UDP; confidencialidad + integridad en un paso</td></tr>
+    <tr><td>gumble</td><td>Go Mumble Library</td><td>Librería Go para bots Mumble; incluye módulos ffmpeg y OpenAL</td></tr>
+    <tr><td>Protobuf</td><td>Protocol Buffers (Google)</td><td>Formato binario de serialización usado por Mumble para mensajes de control sobre TCP</td></tr>
+  </table>
+</div>
+
+<!-- ════════════ 5. SOFTWARE & PROYECTOS ════════════ -->
+<div class="cutout tilt-l">
+  <div class="tape tape-tr"></div>
+  <span class="cat-label">SOFTWARE &amp; PROYECTOS</span>
+  <table class="tbl glos">
+    <tr><td>µStreamer</td><td>(ustreamer)</td><td>Servidor HTTP MJPEG ultraligero en C; parte de PiKVM; captura V4L2 (CSI+USB); encode multihilo o HW M2M</td></tr>
+    <tr><td>memsink</td><td>Memory Sink (shared memory)</td><td>Mecanismo de µStreamer para compartir frames H.264 vía SHM POSIX con otros procesos (ej. Janus plugin)</td></tr>
+    <tr><td>PiKVM</td><td>Pi Keyboard Video Mouse</td><td>Proyecto open-source para KVM-over-IP con RPi; µStreamer es su componente de vídeo</td></tr>
+    <tr><td>RPi-WebRTC</td><td>rpi-webrtc-streamer</td><td>Servidor WebRTC nativo C++ para RPi; encode H.264 HW vía MMAL/libcamera; solo CSI</td></tr>
+  </table>
+</div>
+
+<!-- ════════════ 6. SEGURIDAD ════════════ -->
+<div class="cutout">
+  <div class="tape tape-tl"></div>
+  <span class="cat-label">SEGURIDAD</span>
+  <table class="tbl glos">
+    <tr><td>CSRF</td><td>Cross-Site Request Forgery</td><td>Ataque donde un sitio malicioso envía requests a otro en nombre del usuario</td></tr>
+    <tr><td>CSP</td><td>Content Security Policy</td><td>Cabecera HTTP que restringe qué recursos puede cargar/ejecutar una página</td></tr>
+  </table>
+</div>
+
+<!-- ════════════ NAVIGATION MAP ════════════ -->
+<div class="cutout" style="text-align:center;">
+  <h3>☞ Cruces con Otros Posters</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Categoría</th><th>Poster relacionado</th></tr>
+    <tr><td>WebRTC &amp; señalización</td><td><a href="poster-arq3.html">Arq. 3</a> · <a href="spec-arq3/datachannel.html">datachannel spec</a></td></tr>
+    <tr><td>Hardware &amp; cámaras</td><td><a href="poster-csi-usb.html">CSI vs. USB</a> · <a href="spec-csi-usb/pipeline.html">pipeline spec</a></td></tr>
+    <tr><td>Audio &amp; Mumble</td><td><a href="spec-arq3/mumble-bridge.html">mumble-bridge arq3</a> · <a href="spec-arq6/mumble-bridge.html">mumble-bridge arq6</a></td></tr>
+    <tr><td>µStreamer</td><td><a href="poster-arq6.html">Arq. 6</a> · <a href="spec-arq6/ustreamer.html">µStreamer spec</a></td></tr>
+    <tr><td>Decisión general</td><td><a href="poster-decision.html">Matriz de Decisión</a></td></tr>
+  </table>
+</div>
+
+<!-- ════════════ KEYWORDS ════════════ -->
+<div class="cutout" style="text-align:center;">
+  <span class="kw">SDP</span>
+  <span class="kw-inv">ICE</span>
+  <span class="kw">MJPEG</span>
+  <span class="kw-inv">HLS</span>
+  <span class="kw">CSI-2</span>
+  <span class="kw-inv">UVC</span>
+  <span class="kw">Mumble</span>
+  <span class="kw-inv">V4L2</span>
+  <span class="kw">DTLS</span>
+  <span class="kw-inv">SRTP</span>
+  <span class="kw">ISP</span>
+  <span class="kw-inv">WHEP</span>
+</div>
+
+<footer class="footer">
+  Glosario · SSB-WebRTC · Solar Net Hub ·
+  Fuente: web-rtc.md §4 + web-rtc-ext.md EXT-8
+</footer>
+
+</body>
+</html>

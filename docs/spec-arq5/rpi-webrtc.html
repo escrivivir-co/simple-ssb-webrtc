@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SPEC · RPi-WebRTC Streamer</title>
+<link rel="stylesheet" href="../poster-template/fanzine.css">
+</head>
+<body>
+
+<div class="nav-back">
+  <a href="../poster-arq5.html">◀ VOLVER AL POSTER</a> · SPEC · RPi-WebRTC
+</div>
+
+<header class="header" style="padding:18px 10px 14px;">
+  <div class="stamp">:8889</div>
+  <h1 style="font-size:1.8rem;">RPi-WebRTC Streamer</h1>
+  <div class="sub">Servidor WebRTC nativo C++ para RPi — captura CSI zero-copy, H.264 HW, Opus, señalización embebida</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ═══ IDENTITY ═══ -->
+<div class="cutout">
+  <h3>Identidad del Componente</h3>
+  <table class="tbl">
+    <tr><th>Campo</th><th>Valor</th></tr>
+    <tr><td>Repo</td><td>github.com/kclyu/rpi-webrtc-streamer</td></tr>
+    <tr><td>Lenguaje</td><td>C++ (basado en libwebrtc / Chromium)</td></tr>
+    <tr><td>Licencia</td><td>BSD</td></tr>
+    <tr><td>RAM típica</td><td>~30–50 MB</td></tr>
+    <tr><td>Binario</td><td>~25–40 MB (libwebrtc compilada estáticamente)</td></tr>
+    <tr><td>CPU RPi 3B</td><td>~15–20% (encode HW 10–15% + stack ICE/DTLS 5%)</td></tr>
+    <tr><td>Captura</td><td>MMAL (legacy) / libcamera (moderno) — solo CSI</td></tr>
+    <tr><td>Encode</td><td>H.264 HW VideoCore IV/VI, zero-copy</td></tr>
+    <tr><td>Audio</td><td>ALSA → Opus (libwebrtc AudioEncoder)</td></tr>
+    <tr><td>Transporte</td><td>SRTP sobre DTLS, ICE completo</td></tr>
+    <tr><td>DataChannel</td><td>✔ SCTP sobre DTLS</td></tr>
+    <tr><td>Estado</td><td>⚠️ Mantenimiento irregular (último commit significativo: 2023)</td></tr>
+  </table>
+</div>
+
+<!-- ═══ KEY CONCEPT ═══ -->
+<div class="cutout tilt-r">
+  <h3>Key Concept</h3>
+  <div class="key-concept">
+    A diferencia de go2rtc, MediaMTX o Janus (que son <b>genéricos</b>), RPi-WebRTC se compila contra las APIs de la GPU del RPi para acceder al encoder H.264 HW <b>sin pasar por ffmpeg ni V4L2</b>. El binario integra libwebrtc completa: señalización, ICE, DTLS-SRTP, codec negotiation y encode/capture — todo en un solo proceso C++.
+  </div>
+</div>
+
+<!-- ═══ ARCHITECTURE ═══ -->
+<div class="cutout diagram-wrap">
+  <h3>Arquitectura Interna</h3>
+<pre class="diagram" style="font-size:0.52rem;">
+  ┌───────────────────────────────────────────────────────────────┐
+  │               RPi-WebRTC Streamer (C++)                       │
+  │                                                               │
+  │  ┌─────────────┐   MMAL/libcamera   ┌──────────────────────┐ │
+  │  │ 🎥 Cam CSI  │───────────────────▷│ RaspiCamEncoder      │ │
+  │  └─────────────┘    (zero-copy)     │ (H.264 HW encode)    │ │
+  │                                     └──────────┬───────────┘ │
+  │  ┌─────────────┐   ALSA             ┌──────────┴───────────┐ │
+  │  │ 🎤 Mic      │──────────────────▷│ AudioEncoder (Opus)   │ │
+  │  └─────────────┘                    └──────────┬───────────┘ │
+  │                                                │              │
+  │                                     ┌──────────┴───────────┐ │
+  │                                     │ libwebrtc stack      │ │
+  │                                     │ PeerConnection       │ │
+  │                                     │ ICE + DTLS + SRTP    │ │
+  │                                     │ DataChannel (SCTP)   │ │
+  │                                     └──────────┬───────────┘ │
+  │                                                │              │
+  │  ┌───────────────────────────────────┐         │              │
+  │  │ HTTP Server (señalización)        │◄────────┘              │
+  │  │ WebSocket (ICE candidates)        │                        │
+  │  │ Sirve: SDP offer/answer           │                        │
+  │  │ Conf.: resolución, bitrate, etc.  │                        │
+  │  └───────────────┬───────────────────┘                        │
+  └──────────────────┼────────────────────────────────────────────┘
+                     │ HTTP/WS (:8889)
+                     ▼
+               Peer (browser o Node.js consumer)
+</pre>
+</div>
+
+<!-- ═══ MMAL vs LIBCAMERA ═══ -->
+<div class="cutout tilt-l">
+  <h3>Captura: MMAL vs libcamera</h3>
+  <table class="tbl">
+    <tr><th></th><th>MMAL (legacy)</th><th>libcamera (moderno)</th></tr>
+    <tr><td><b>Kernel</b></td><td>Raspbian antiguo</td><td>Bookworm+ (dtoverlay=imx219/ov5647)</td></tr>
+    <tr><td><b>Módulos HW</b></td><td>OV5647, IMX219, IMX477</td><td>Todos los soportados por libcamera</td></tr>
+    <tr><td><b>Zero-copy</b></td><td>✔ vía GPU memory</td><td>✔ vía DMA-BUF</td></tr>
+    <tr><td><b>RPi-WebRTC</b></td><td>✔ Rama principal</td><td>⚠️ Fork / rama experimental</td></tr>
+    <tr><td><b>Recomendación</b></td><td>Si kernel legacy</td><td>Preferido en Bookworm</td></tr>
+  </table>
+  <div class="warn">En Debian Bookworm (stack actual del SNH), MMAL está deprecado. Verificar que RPi-WebRTC soporta libcamera en la versión/fork elegida.</div>
+</div>
+
+<!-- ═══ SIGNALING ═══ -->
+<div class="cutout">
+  <h3>Señalización HTTP+WS</h3>
+  <div class="key-concept">RPi-WebRTC tiene su propio servidor HTTP/WebSocket embebido. No necesita señalización externa. Sin embargo, para integrarse con Oasis (donde la señalización va por SSB), el proxy Node.js se conecta como peer local.</div>
+
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Endpoint</th><th>Método</th><th>Función</th></tr>
+    <tr><td>/offer</td><td>POST</td><td>Enviar SDP offer → recibir SDP answer</td></tr>
+    <tr><td>/ws</td><td>WebSocket</td><td>Intercambio de ICE candidates en tiempo real</td></tr>
+    <tr><td>/config</td><td>GET/POST</td><td>Configurar resolución, bitrate, etc.</td></tr>
+    <tr><td>/snapshot</td><td>GET</td><td>JPEG snapshot (si soportado)</td></tr>
+  </table>
+
+  <details>
+    <summary>Ejemplo: handshake desde Node.js</summary>
+    <div class="detail-body">
+<div class="cmd"><span class="comment"># Pseudocódigo del proxy media_proxy.js</span>
+<span class="comment"># 1. Crear PeerConnection (node-datachannel)</span>
+const pc = new RTCPeerConnection();
+<span class="comment"># 2. POST SDP offer a RPi-WebRTC</span>
+const offer = pc.createOffer();
+const answer = await fetch('http://localhost:8889/offer', {
+  method: 'POST', body: offer.sdp
+});
+pc.setRemoteDescription(answer);
+<span class="comment"># 3. Recibir tracks → pipe a ffmpeg → MJPEG/OGG HTTP</span>
+pc.ontrack = (ev) =&gt; pipeToFfmpeg(ev.track);</div>
+    </div>
+  </details>
+</div>
+
+<!-- ═══ COMPILATION ═══ -->
+<div class="cutout tilt-r">
+  <h3>Compilación: Cross-Compile x86 → ARM</h3>
+  <div class="warn">libwebrtc no se compila en RPi directamente (horas, ~4 GB de toolchain). Se usa cross-compile desde x86_64.</div>
+
+  <div class="step-title">1. Clonar repositorio + depot_tools</div>
+  <div class="cmd"><span class="prompt">git clone https://github.com/kclyu/rpi-webrtc-streamer.git</span>
+<span class="prompt">git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git</span>
+<span class="prompt">export PATH=$PWD/depot_tools:$PATH</span></div>
+
+  <div class="step-title">2. Fetch libwebrtc + parches RPi</div>
+  <div class="cmd"><span class="prompt">cd rpi-webrtc-streamer</span>
+<span class="prompt">./scripts/build_env_setup.sh</span>
+<span class="prompt">./scripts/build_webrtc.sh arm</span></div>
+
+  <div class="step-title">3. Compilar el streamer</div>
+  <div class="cmd"><span class="prompt">./scripts/build_rws.sh</span>
+<span class="comment"># Resultado: out/rws (binario ARM, ~25-40 MB)</span></div>
+
+  <div class="step-title">4. Deploy al RPi</div>
+  <div class="cmd"><span class="prompt">scp out/rws pi@rpi:/opt/rpi-webrtc/</span>
+<span class="prompt">scp etc/webrtc_streamer.conf pi@rpi:/opt/rpi-webrtc/</span></div>
+
+  <div class="tip">Alternativa: buscar binarios pre-compilados en los <b>Releases</b> del repo o forks community. Verificar compatibilidad ARM vs ARM64.</div>
+</div>
+
+<!-- ═══ CONFIG ═══ -->
+<div class="cutout">
+  <h3>Configuración: webrtc_streamer.conf</h3>
+  <div class="cmd"><span class="comment"># /opt/rpi-webrtc/webrtc_streamer.conf (ejemplo mínimo)</span>
+
+<span class="comment"># Resolución y bitrate</span>
+max_bitrate=1500000
+resolution=640x480
+framerate=25
+
+<span class="comment"># Servidor HTTP/WS</span>
+websocket_enable=true
+direct_socket_enable=false
+wss_url=ws://localhost:8889
+
+<span class="comment"># Audio</span>
+audio_enable=true
+audio_device=default
+
+<span class="comment"># STUN (para peers remotos)</span>
+stun_server=stun:stun.l.google.com:19302
+
+<span class="comment"># Log</span>
+log_dir=/var/log/rpi-webrtc</div>
+</div>
+
+<!-- ═══ TROUBLESHOOTING ═══ -->
+<div class="cutout tilt-l">
+  <h3>Troubleshooting</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Síntoma</th><th>Causa</th><th>Fix</th></tr>
+    <tr>
+      <td>No se detecta cámara CSI</td>
+      <td>MMAL deprecado en Bookworm</td>
+      <td>Usar fork con soporte libcamera. Verificar <span class="hl-box">dtoverlay</span> en config.txt</td>
+    </tr>
+    <tr>
+      <td>Binario no arranca (SIGILL)</td>
+      <td>Compilado para ARM64, device es ARM32</td>
+      <td>Recompilar con target armhf o usar device con OS 64-bit</td>
+    </tr>
+    <tr>
+      <td>ICE candidates vacíos</td>
+      <td>Firewall bloquea UDP</td>
+      <td>Abrir rango de puertos UDP o configurar TURN server</td>
+    </tr>
+    <tr>
+      <td>High CPU en encode</td>
+      <td>Fallback a software encode</td>
+      <td>Verificar que /dev/vchiq existe (VideoCore). <span class="hl-box">ls /dev/vchiq</span></td>
+    </tr>
+    <tr>
+      <td>WebSocket connection refused</td>
+      <td>Puerto 8889 ocupado</td>
+      <td>Cambiar puerto en conf. Verificar con <span class="hl-box">ss -tlnp | grep 8889</span></td>
+    </tr>
+    <tr>
+      <td>USB cam no funciona</td>
+      <td>RPi-WebRTC no soporta USB</td>
+      <td>Cambiar a <a href="../poster-arq3.html">Arq. 3</a> (go2rtc) o <a href="../poster-arq6.html">Arq. 6</a> (µStreamer)</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ═══ KEYWORDS ═══ -->
+<div class="cutout" style="text-align:center;">
+  <span class="kw">RPi-WebRTC</span>
+  <span class="kw-inv">libwebrtc</span>
+  <span class="kw">MMAL</span>
+  <span class="kw-inv">libcamera</span>
+  <span class="kw">H.264 HW</span>
+  <span class="kw-inv">zero-copy</span>
+  <span class="kw">VideoCore IV</span>
+  <span class="kw-inv">cross-compile</span>
+  <span class="kw">SRTP</span>
+  <span class="kw-inv">:8889</span>
+</div>
+
+<footer class="footer">
+  SPEC · RPi-WebRTC Streamer · Arq. 5 · SSB-WebRTC · Solar Net Hub
+</footer>
+
+</body>
+</html>

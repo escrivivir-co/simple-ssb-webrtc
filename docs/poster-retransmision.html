@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Retransmisión al Navegador — Sin JS · Solar Net Hub</title>
+<link rel="stylesheet" href="poster-template/fanzine.css">
+</head>
+<body>
+
+<!-- ════════════ HEADER ════════════ -->
+<header class="header">
+  <div class="stamp">§2.1</div>
+  <h1>Retransmisión al Navegador</h1>
+  <div class="sub">Audio &amp; Vídeo sin JavaScript — HTML/CSS puro</div>
+  <div class="sub2">¿Cómo entrega el servidor media al browser sin una línea de JS?</div>
+  <div class="issue">web-rtc.md §2.1 + web-rtc-ext.md EXT-4</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ════════════ STATS BAR ════════════ -->
+<div class="stats-bar tilt-r">
+  <div class="stat"><span class="val">4</span><span class="lbl">técnicas vídeo</span></div>
+  <div class="stat"><span class="val">4</span><span class="lbl">técnicas audio</span></div>
+  <div class="stat"><span class="val">3</span><span class="lbl">fases deploy</span></div>
+  <div class="stat"><span class="val">79%</span><span class="lbl">HLS nativo</span></div>
+  <div class="stat"><span class="val">100%</span><span class="lbl">MJPEG</span></div>
+</div>
+
+<!-- ════════════ THE KEY QUESTION ════════════ -->
+<div class="callout tilt-l">
+  ★ Restricción Oasis: cero JS en browser · Todo debe funcionar con HTML puro ★
+</div>
+
+<!-- ════════════ VIDEO TECHNIQUES ════════════ -->
+<div class="cutout">
+  <div class="tape tape-tl"></div>
+  <h3>Técnicas de Vídeo (sin JS)</h3>
+  <table class="tbl" style="font-size:0.58rem;">
+    <tr><th>Técnica</th><th>HTML</th><th>Latencia</th><th>BW</th><th>Browser</th></tr>
+    <tr>
+      <td><b>MJPEG &lt;img&gt;</b></td>
+      <td><code>&lt;img src="/video"&gt;</code></td>
+      <td>100–300 ms</td>
+      <td>Alto (×10 vs H.264)</td>
+      <td><b>Universal ✔</b></td>
+    </tr>
+    <tr>
+      <td><b>HLS &lt;video&gt;</b></td>
+      <td><code>&lt;video src="/stream.m3u8"&gt;</code></td>
+      <td>2–6 s</td>
+      <td>Bajo (H.264)</td>
+      <td>Chrome 142+, Safari 6+, Android · <b>~79%</b></td>
+    </tr>
+    <tr>
+      <td><b>JPEG + meta refresh</b></td>
+      <td><code>&lt;img&gt;</code> + <code>&lt;meta refresh&gt;</code></td>
+      <td>1–10 s</td>
+      <td>Mínimo</td>
+      <td><b>Universal ✔</b></td>
+    </tr>
+    <tr>
+      <td><b>GIF animado</b></td>
+      <td><code>&lt;img src="/live.gif"&gt;</code></td>
+      <td>1–3 s</td>
+      <td>Alto (GIF ineficiente)</td>
+      <td><b>Universal ✔</b></td>
+    </tr>
+  </table>
+  <div class="key-concept" style="margin-top:8px;">
+    <b>MJPEG</b>: servidor envía <code>multipart/x-mixed-replace</code> — cada parte es un JPEG. El browser actualiza &lt;img&gt; automáticamente.<br>
+    <b>HLS</b>: ffmpeg genera playlist <code>.m3u8</code> + segmentos <code>.ts</code>; servidor sirve archivos estáticos. Chrome 142+ (2026) lo soporta nativo sin JS.
+  </div>
+</div>
+
+<!-- ════════════ AUDIO TECHNIQUES ════════════ -->
+<div class="cutout tilt-l">
+  <div class="tape tape-tr"></div>
+  <h3>Técnicas de Audio (sin JS)</h3>
+  <table class="tbl" style="font-size:0.58rem;">
+    <tr><th>Técnica</th><th>HTML</th><th>Latencia</th><th>Browser</th><th>BW</th></tr>
+    <tr>
+      <td><b>WAV/PCM chunked</b></td>
+      <td><code>&lt;audio src="/audio" autoplay&gt;</code></td>
+      <td>~50 ms</td>
+      <td><b>Universal ✔</b></td>
+      <td>1.4 Mbps stereo</td>
+    </tr>
+    <tr>
+      <td><b>OGG/Opus chunked</b></td>
+      <td><code>&lt;audio src="/audio" autoplay&gt;</code></td>
+      <td>~200 ms</td>
+      <td>Chrome, Firefox, Edge, Opera · <b>No: Safari &lt;17</b></td>
+      <td>~32-128 kbps</td>
+    </tr>
+    <tr>
+      <td><b>MP3 chunked</b></td>
+      <td><code>&lt;audio src="/audio" autoplay&gt;</code></td>
+      <td>~500 ms</td>
+      <td><b>Universal ✔</b></td>
+      <td>~128 kbps</td>
+    </tr>
+    <tr>
+      <td><b>HLS audio</b></td>
+      <td><code>&lt;video src="/audio.m3u8"&gt;</code></td>
+      <td>2–6 s</td>
+      <td>Igual que vídeo HLS</td>
+      <td>~64 kbps AAC</td>
+    </tr>
+  </table>
+  <div class="tip">Todos usan <code>Transfer-Encoding: chunked</code> con el Content-Type adecuado. El browser reproduce sin JS.</div>
+</div>
+
+<div class="washi"></div>
+
+<!-- ════════════ LATENCY DIAGRAM ════════════ -->
+<div class="cutout diagram-wrap">
+  <div class="tape tape-tl"></div>
+  <div class="tape tape-tr"></div>
+  <h2>☞ Mapa de Latencia</h2>
+<pre class="diagram">
+                    LATENCIA
+  50ms       200ms      1s        3s         6s
+   │          │         │         │          │
+   █ WAV      █ MJPEG   │         │          │    audio
+   │          █ OGG     │         │          │
+   │          │ MP3─────█         │          │    vídeo
+   │          │         │ HLS─────█──────────█
+   │          │         █ refresh │          │
+   └──────────┴─────────┴─────────┴──────────┘
+            LAN ok                Internet ok
+</pre>
+</div>
+
+<!-- ════════════ TWO COLUMNS ════════════ -->
+<div class="cols">
+
+  <div class="col">
+    <!-- RECOMMENDATIONS PER PHASE -->
+    <div class="cutout tilt-l">
+      <div class="tape tape-tr"></div>
+      <h3>★ Recomendación por Fase</h3>
+      <table class="tbl" style="font-size:0.58rem;">
+        <tr><th>Fase</th><th>Vídeo</th><th>Audio</th><th>Por qué</th></tr>
+        <tr>
+          <td><b>1: localhost</b></td>
+          <td>MJPEG &lt;img&gt;</td>
+          <td>WAV/PCM</td>
+          <td>Latencia mínima, BW irrelevante</td>
+        </tr>
+        <tr>
+          <td><b>2: LAN</b></td>
+          <td>MJPEG &lt;img&gt;</td>
+          <td>OGG/Opus</td>
+          <td>MJPEG tolerable (~5 Mbps); Opus ahorra BW</td>
+        </tr>
+        <tr>
+          <td><b>3: Internet</b></td>
+          <td><b>HLS &lt;video&gt;</b></td>
+          <td>HLS integrado</td>
+          <td>MJPEG inviable (×10 BW). HLS H.264 ~10× más eficiente</td>
+        </tr>
+      </table>
+      <div class="warn" style="margin-top:6px;">Fase 3 con HLS: Firefox desktop sin soporte nativo → fallback a MJPEG o mensaje "usa Chrome/Safari".</div>
+    </div>
+  </div>
+
+  <div class="col">
+    <!-- BROWSER CODEC MATRIX -->
+    <div class="cutout tilt-r">
+      <div class="tape tape-tl"></div>
+      <h3>Soporte Browser sin JS</h3>
+      <table class="tbl" style="font-size:0.55rem;">
+        <tr><th>Browser</th><th>HLS nat.</th><th>MJPEG</th><th>HTTP Prog.</th></tr>
+        <tr><td><b>Chrome 142+</b></td><td>✔*</td><td>✔</td><td>✔</td></tr>
+        <tr><td><b>Firefox desk.</b></td><td>✘</td><td>✔</td><td>✔</td></tr>
+        <tr><td><b>Safari 14+</b></td><td>✔</td><td>✔</td><td>✘</td></tr>
+        <tr><td><b>Android Chrome</b></td><td>✔*</td><td>✔</td><td>✔</td></tr>
+        <tr><td><b>iPhone Safari</b></td><td>✔</td><td>✔</td><td>✘</td></tr>
+      </table>
+      <div style="font-size:0.55rem;opacity:0.7;margin-top:4px;">* HLS nativo vía HTML, no vía MSE</div>
+
+      <div class="key-concept" style="margin-top:8px;">
+        <b>No existe un formato único sin JS que cubra el 100%.</b> De ahí la estrategia dual: MJPEG (universal) + HLS (eficiente donde se soporta).
+      </div>
+    </div>
+  </div>
+
+</div><!-- /cols -->
+
+<!-- ════════════ DUAL STRATEGY ════════════ -->
+<div class="cutout">
+  <div class="tape tape-tl"></div>
+  <div class="tape tape-tr"></div>
+  <h3>☞ Estrategia Dual: MJPEG + HLS</h3>
+  <div class="key-concept" style="margin-bottom:10px;">
+    Chrome 142+ (2026) soporta HLS nativo en <code>&lt;video src=".m3u8"&gt;</code> sin JavaScript. Combinado con Safari (soporte desde 2012), <b>HLS nativo cubre ~79% de browsers</b>.
+  </div>
+
+<pre class="diagram" style="font-size:0.6rem;">
+  ┌────────────────────────────────────────────────────────────┐
+  │ Oasis :3000 (Node.js)                                     │
+  │                                                            │
+  │   User-Agent?                                              │
+  │      │                                                     │
+  │      ├──── Chrome 142+ / Safari / Android ────┐            │
+  │      │                                        ▼            │
+  │      │     &lt;video src="/stream.m3u8" autoplay&gt;             │
+  │      │     (HLS: H.264, baja BW, ~79% global)             │
+  │      │                                                     │
+  │      └──── Firefox desktop / otros ───────────┐            │
+  │                                               ▼            │
+  │            &lt;img src="/video"&gt;                               │
+  │            &lt;audio src="/audio" autoplay&gt;                    │
+  │            (MJPEG + OGG: universal, alta BW)               │
+  └────────────────────────────────────────────────────────────┘
+</pre>
+
+  <div class="cmd" style="font-size:0.58rem;margin-top:8px;"><span class="comment">&lt;!-- Fase 3: dual MJPEG/HLS (servidor detecta User-Agent) --&gt;</span>
+
+<span class="comment">&lt;!-- Chrome 142+, Safari, Android: --&gt;</span>
+&lt;video src="/webrtc/media/stream.m3u8" autoplay muted playsinline controls&gt;&lt;/video&gt;
+
+<span class="comment">&lt;!-- Fallback Firefox desktop, navegadores antiguos: --&gt;</span>
+&lt;img src="/webrtc/media/video" alt="Vídeo"&gt;
+&lt;audio src="/webrtc/media/audio" autoplay controls&gt;&lt;/audio&gt;</div>
+</div>
+
+<div class="washi"></div>
+
+<!-- ════════════ NPM PACKAGES ════════════ -->
+<div class="cutout tilt-r">
+  <div class="tape tape-tl"></div>
+  <h3>Paquetes npm para el Pipeline Servidor</h3>
+  <table class="tbl" style="font-size:0.58rem;">
+    <tr><th>Paquete</th><th>Función</th><th>dl/sem</th></tr>
+    <tr><td><b>mjpeg-server</b></td><td>Crea endpoint MJPEG desde JPEGs (multipart/x-mixed-replace)</td><td>7.8k</td></tr>
+    <tr><td><b>mjpeg-proxy</b></td><td>Proxy MJPEG multi-cliente sobre una sola fuente</td><td>4.3k</td></tr>
+    <tr><td><b>mjpeg-consumer</b></td><td>Consume stream MJPEG HTTP y emite buffers JPEG</td><td>71k</td></tr>
+    <tr><td><b>ffmpeg-stream</b></td><td>Wrapper Node.js streams sobre ffmpeg (I/O como streams)</td><td>6.6k</td></tr>
+    <tr><td><b>ffmpeg -f hls</b></td><td>Genera .m3u8 + .ts directamente. Sin dep npm extra</td><td>—</td></tr>
+  </table>
+</div>
+
+<!-- ════════════ ARCHITECTURE CROSSREF ════════════ -->
+<div class="cutout tilt-l">
+  <h3>¿Quién Sirve el Media?</h3>
+  <div class="key-concept" style="margin-bottom:8px;">
+    §2.1 asume que Node.js (Oasis) hace <b>todo</b>: recibe pistas, decodifica con ffmpeg, sirve MJPEG/HLS. Pero existe otra vía: un <b>servidor media dedicado</b> al lado (§2.2).
+  </div>
+  <table class="tbl" style="font-size:0.58rem;">
+    <tr><th></th><th>Node.js directo (§2.1)</th><th>Servidor media (§2.2)</th></tr>
+    <tr><td><b>MJPEG</b></td><td>ffmpeg → mjpeg-server → &lt;img&gt;</td><td>go2rtc / µStreamer → proxy</td></tr>
+    <tr><td><b>HLS</b></td><td>ffmpeg -f hls → serve static</td><td>go2rtc / MediaMTX auto-HLS</td></tr>
+    <tr><td><b>CPU Node.js</b></td><td>Alta (ffmpeg child)</td><td>Baja (solo proxy HTTP)</td></tr>
+    <tr><td><b>Complejidad</b></td><td>Media (código propio)</td><td>Baja (config YAML)</td></tr>
+    <tr><td><b>Poster</b></td><td>—</td><td><a href="poster-arq3.html">Arq. 3</a> · <a href="poster-arq6.html">Arq. 6</a></td></tr>
+  </table>
+  <div class="tip">Las arquitecturas elegidas (Arq. 3 y 6) usan servidor media dedicado. Node.js solo hace proxy HTTP y sirve HTML.</div>
+</div>
+
+<!-- ════════════ CSI/USB IMPACT ════════════ -->
+<div class="cutout">
+  <h3>Impacto CSI vs. USB en Retransmisión (EXT-4)</h3>
+  <table class="tbl" style="font-size:0.58rem;">
+    <tr><th>Formato entrega</th><th>Pipeline CSI</th><th>Pipeline USB</th><th>Δ CPU</th></tr>
+    <tr>
+      <td><b>MJPEG &lt;img&gt;</b></td>
+      <td>rpicam-vid --codec mjpeg → HTTP</td>
+      <td>ffmpeg -f v4l2 mjpeg → -c:v copy → HTTP</td>
+      <td>~0%</td>
+    </tr>
+    <tr>
+      <td><b>HLS &lt;video&gt;</b></td>
+      <td>rpicam-vid h264 → ffmpeg -f hls</td>
+      <td>ffmpeg mjpeg → h264_v4l2m2m → -f hls</td>
+      <td>CSI ~5% · USB ~15%</td>
+    </tr>
+  </table>
+  <div class="warn">Para Fase 3 (Internet) con HLS, CSI ahorra ~10% CPU vs. USB. Ver <a href="poster-csi-usb.html">CSI vs. USB</a> para detalles.</div>
+</div>
+
+<!-- ════════════ KEYWORDS ════════════ -->
+<div class="cutout" style="text-align:center;">
+  <span class="kw">MJPEG</span>
+  <span class="kw-inv">HLS</span>
+  <span class="kw">multipart</span>
+  <span class="kw-inv">.m3u8</span>
+  <span class="kw">OGG/Opus</span>
+  <span class="kw-inv">WAV/PCM</span>
+  <span class="kw">chunked</span>
+  <span class="kw-inv">autoplay</span>
+  <span class="kw">mjpeg-server</span>
+  <span class="kw-inv">ffmpeg -f hls</span>
+  <span class="kw">User-Agent</span>
+  <span class="kw-inv">cero JS</span>
+</div>
+
+<footer class="footer">
+  Retransmisión al Navegador · SSB-WebRTC · Solar Net Hub ·
+  Fuente: web-rtc.md §2.1 + web-rtc-ext.md EXT-4
+</footer>
+
+</body>
+</html>

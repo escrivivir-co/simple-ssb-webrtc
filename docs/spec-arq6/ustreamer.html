@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SPEC · µStreamer — Referencia Completa</title>
+<link rel="stylesheet" href="../poster-template/fanzine.css">
+</head>
+<body>
+
+<div class="nav-back">
+  <a href="../poster-arq6.html">◀ VOLVER AL POSTER</a> · SPEC · µSTREAMER
+</div>
+
+<header class="header" style="padding:18px 10px 14px;">
+  <div class="stamp">:8080</div>
+  <h1 style="font-size:1.8rem;">µStreamer</h1>
+  <div class="sub">Referencia completa — pikvm/ustreamer</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ═══ IDENTITY ═══ -->
+<div class="cutout">
+  <h3>Identidad del Componente</h3>
+  <table class="tbl">
+    <tr><th>Campo</th><th>Valor</th></tr>
+    <tr><td>Repo</td><td>github.com/pikvm/ustreamer</td></tr>
+    <tr><td>Versión ref.</td><td>v6.55</td></tr>
+    <tr><td>Lenguaje</td><td>C (95.8%)</td></tr>
+    <tr><td>Licencia</td><td>GPL-3.0</td></tr>
+    <tr><td>Proyecto padre</td><td>PiKVM</td></tr>
+    <tr><td>RAM típica</td><td>~5–15 MB</td></tr>
+    <tr><td>Install Debian</td><td><span class="hl-box">apt install ustreamer</span></td></tr>
+    <tr><td>Compile from src</td><td>make &amp;&amp; sudo make install</td></tr>
+    <tr><td>Deps build</td><td>libevent-dev libjpeg-dev libbsd-dev</td></tr>
+  </table>
+</div>
+
+<!-- ═══ CLI FLAGS ═══ -->
+<div class="cutout tilt-r">
+  <div class="tape tape-tl"></div>
+  <h3>CLI Flags — Referencia Rápida</h3>
+  <div class="key-concept">Toda la config es por flags CLI. No hay fichero de configuración YAML/JSON.</div>
+
+  <table class="tbl" style="margin-top:10px;">
+    <tr><th>Flag</th><th>Default</th><th>Qué hace</th></tr>
+    <tr><td><b>--host</b></td><td>0.0.0.0</td><td>IP de escucha. Usar <b>127.0.0.1</b> si Oasis hace proxy</td></tr>
+    <tr><td><b>--port</b></td><td>8080</td><td>Puerto HTTP</td></tr>
+    <tr><td><b>--device</b></td><td>/dev/video0</td><td>Device V4L2 de captura</td></tr>
+    <tr><td><b>--encoder</b></td><td>cpu</td><td><b>m2m-image</b> = HW JPEG vía V4L2 M2M (CSI). <b>cpu</b> = libjpeg (USB)</td></tr>
+    <tr><td><b>--workers</b></td><td>1</td><td>Hilos JPEG encode paralelos. Recomendado: <b>3</b> en RPi 3B</td></tr>
+    <tr><td><b>--resolution</b></td><td>640x480</td><td>Resolución de captura. Ej: 1280x720, 1920x1080</td></tr>
+    <tr><td><b>--format</b></td><td>auto</td><td>Pixel format V4L2: YUYV, MJPEG, RGB24…</td></tr>
+    <tr><td><b>--desired-fps</b></td><td>max</td><td>FPS objetivo. Ej: 15, 30</td></tr>
+    <tr><td><b>--quality</b></td><td>80</td><td>Calidad JPEG (1–100)</td></tr>
+    <tr><td><b>--drop-same-frames</b></td><td>0</td><td>Nº frames idénticos a descartar antes de enviar. Ahorra BW si escena estática. Recomendado: <b>20</b></td></tr>
+    <tr><td><b>--h264-sink</b></td><td>—</td><td>Habilita H.264 M2M → shared memory (memsink) para Janus</td></tr>
+    <tr><td><b>--h264-sink-mode</b></td><td>—</td><td>Nombre del memsink. Ej: demo::h264</td></tr>
+    <tr><td><b>--static</b></td><td>—</td><td>Directorio con ficheros estáticos para la UI web</td></tr>
+    <tr><td><b>--slowdown</b></td><td>off</td><td>Reduce FPS si no hay clientes conectados (ahorro CPU)</td></tr>
+    <tr><td><b>--exit-on-no-clients</b></td><td>off</td><td>Mata el proceso si 0 clientes (para systemd restart on-demand)</td></tr>
+  </table>
+</div>
+
+<!-- ═══ ENCODER MATRIX ═══ -->
+<div class="cutout tilt-l">
+  <h3>Matriz de Encoders × Cámara</h3>
+  <table class="tbl">
+    <tr>
+      <th>Cámara</th>
+      <th>--encoder</th>
+      <th>Prerrequisito</th>
+      <th>CPU @ 720p</th>
+      <th>Nota</th>
+    </tr>
+    <tr>
+      <td><b>CSI</b> (libcamera)</td>
+      <td><span class="hl-box">m2m-image</span></td>
+      <td>kernel ≥5.15.32 + bcm2835-v4l2</td>
+      <td>~3–8%</td>
+      <td>HW JPEG via VideoCore IV. Óptimo.</td>
+    </tr>
+    <tr>
+      <td><b>CSI</b> (legacy MMAL)</td>
+      <td>m2m-image</td>
+      <td>sudo modprobe bcm2835-v4l2</td>
+      <td>~3–8%</td>
+      <td>Bookworm: prefiere libcamera</td>
+    </tr>
+    <tr>
+      <td><b>USB</b> (UVC, YUYV)</td>
+      <td>cpu</td>
+      <td>—</td>
+      <td>~10–20%</td>
+      <td>CPU libjpeg, --workers=3 recomendado</td>
+    </tr>
+    <tr>
+      <td><b>USB</b> (UVC, MJPEG nativo)</td>
+      <td>cpu</td>
+      <td>--format=MJPEG</td>
+      <td>~2–5%</td>
+      <td>La cámara ya entrega JPEG;</td>
+    </tr>
+  </table>
+
+  <div class="tip">Si la cámara USB ya emite MJPEG nativo (muchas webcams lo hacen), usa <b>--format=MJPEG</b> para zero-copy passthrough: CPU mínima.</div>
+</div>
+
+<!-- ═══ V4L2 M2M ═══ -->
+<div class="cutout">
+  <h3>Key Concept: V4L2 M2M — Hardware Encode</h3>
+  <div class="key-concept">
+    <b>Memory-to-Memory (M2M)</b>: el kernel Linux expone el encoder HW de la GPU (VideoCore IV) como un device V4L2 M2M. µStreamer envía frames RAW al kernel → la GPU los comprime a JPEG → µStreamer los sirve por HTTP. Zero-copy en kernel space.
+  </div>
+
+  <div class="cmd"><span class="comment"># Verificar que el device M2M existe:</span>
+<span class="prompt">v4l2-ctl --list-devices</span>
+<span class="comment"># Buscar "bcm2835-codec" (RPi) o "Video Codec" (kernel ≥5.15)</span>
+
+<span class="comment"># Verificar JPEG encode capability:</span>
+<span class="prompt">v4l2-ctl -d /dev/video11 --list-formats</span></div>
+
+  <div class="warn">Si no aparece el device M2M: <b>sudo modprobe bcm2835-codec</b>. En Yocto/Docker verificar que el module esté incluido en el rootfs.</div>
+</div>
+
+<!-- ═══ HTTP ENDPOINTS ═══ -->
+<div class="cutout tilt-r">
+  <h3>HTTP Endpoints</h3>
+  <table class="tbl">
+    <tr><th>Path</th><th>Content-Type</th><th>Uso</th></tr>
+    <tr><td><b>GET /stream</b></td><td>multipart/x-mixed-replace; boundary=…</td><td>MJPEG continuo. Para <b>&lt;img src="/video"&gt;</b></td></tr>
+    <tr><td><b>GET /snapshot</b></td><td>image/jpeg</td><td>Último frame JPEG. Para thumbnails, SSB blobs</td></tr>
+    <tr><td><b>GET /</b></td><td>text/html</td><td>Página de status (si --static activo)</td></tr>
+    <tr><td><b>GET /state</b></td><td>application/json</td><td>JSON con resolución, fps, encoder, connected clients</td></tr>
+  </table>
+
+  <div class="tip"><b>/snapshot</b> es útil para generar thumbnails guardados como SSB blobs — un JPEG puntual sin stream continuo. Ideal para previews en el feed SSB.</div>
+</div>
+
+<!-- ═══ STARTUP COMMANDS ═══ -->
+<div class="cutout">
+  <h3>Comandos de Inicio — Copy-Paste Ready</h3>
+
+  <div style="font-size:0.7rem;font-weight:bold;margin-bottom:4px;">CSI (Bookworm, libcamera)</div>
+  <div class="cmd"><span class="prompt">sudo modprobe bcm2835-v4l2</span>
+<span class="prompt">libcamerify ustreamer \</span>
+    --host 127.0.0.1 \
+    --port 8080 \
+    --encoder=m2m-image \
+    --workers=3 \
+    --resolution=1280x720 \
+    --desired-fps=15 \
+    --drop-same-frames=20</div>
+
+  <div style="font-size:0.7rem;font-weight:bold;margin:8px 0 4px;">USB (webcam UVC)</div>
+  <div class="cmd"><span class="prompt">ustreamer \</span>
+    --host 127.0.0.1 \
+    --port 8080 \
+    --device=/dev/video0 \
+    --workers=3 \
+    --resolution=1280x720 \
+    --desired-fps=15 \
+    --drop-same-frames=20</div>
+
+  <div style="font-size:0.7rem;font-weight:bold;margin:8px 0 4px;">USB (cámara MJPEG nativa — zero-copy)</div>
+  <div class="cmd"><span class="prompt">ustreamer \</span>
+    --host 127.0.0.1 \
+    --port 8080 \
+    --device=/dev/video0 \
+    --format=MJPEG \
+    --desired-fps=15 \
+    --drop-same-frames=20</div>
+</div>
+
+<!-- ═══ TROUBLESHOOTING ═══ -->
+<div class="cutout tilt-l">
+  <div class="tape tape-tr"></div>
+  <h3>Troubleshooting — Quick Fixes</h3>
+  <table class="tbl">
+    <tr><th>Síntoma</th><th>Causa probable</th><th>Fix</th></tr>
+    <tr><td>m2m-image not available</td><td>Module no cargado</td><td><span class="hl-box">sudo modprobe bcm2835-codec</span></td></tr>
+    <tr><td>/dev/video0 not found</td><td>Cámara no detectada</td><td>Verificar FFC (CSI) o lsusb (USB). dmesg | grep video</td></tr>
+    <tr><td>Very high CPU</td><td>Encoder CPU + alta resolución</td><td>Bajar resolución o usar m2m-image (CSI) / --format=MJPEG (USB)</td></tr>
+    <tr><td>Image stuttering</td><td>Workers insuficientes</td><td>--workers=3 o --workers=4</td></tr>
+    <tr><td>Address already in use</td><td>Otra instancia corriendo</td><td>killall ustreamer; verificar puerto</td></tr>
+    <tr><td>Permission denied /dev/video*</td><td>User no en grupo video</td><td><span class="hl-box">sudo usermod -aG video $USER</span></td></tr>
+    <tr><td>libcamerify: not found</td><td>libcamera-tools no instalado</td><td>apt install libcamera-tools</td></tr>
+    <tr><td>Bandwidth too high on LAN</td><td>Alta res + escena dinámica</td><td>--drop-same-frames=20 + --quality=60 + 720p</td></tr>
+  </table>
+</div>
+
+<!-- ═══ MEMSINK / JANUS (optional) ═══ -->
+<div class="cutout">
+  <h3>H.264 Memsink → Janus (Opcional — Solo si Remoto)</h3>
+
+  <div class="key-concept">
+    <b>memsink</b>: µStreamer puede generar H.264 via V4L2 M2M y exponerlo en shared memory. El plugin Janus lee de esa SHM y lo sirve como WebRTC. Esto permite tener MJPEG local + WebRTC remoto desde una sola instancia.
+  </div>
+
+  <div class="cmd"><span class="comment"># µStreamer con doble salida: MJPEG + H.264 memsink</span>
+<span class="prompt">ustreamer \</span>
+    --host 127.0.0.1 --port 8080 \
+    --encoder=m2m-image --workers=3 \
+    --h264-sink=demo --h264-sink-mode=0777</div>
+
+  <div class="warn">Janus Gateway añade ~10–20 MB RAM extra. <b>No recomendado para Arq. 6</b> (solo-LAN). Reservar para cuando se necesite remoto real.</div>
+
+  <div class="tip"><b>DRY note</b>: si necesitas remoto, evalúa primero Arq. 3 (go2rtc) — integra WebRTC sin Janus ni memsink.</div>
+</div>
+
+<!-- ═══ KEYWORDS ═══ -->
+<div class="cutout" style="text-align:center;">
+  <h3>Keywords</h3>
+  <span class="kw">V4L2</span>
+  <span class="kw">M2M</span>
+  <span class="kw">MJPEG</span>
+  <span class="kw">libevent</span>
+  <span class="kw-inv">multipart/x-mixed-replace</span>
+  <span class="kw">snapshot</span>
+  <span class="kw">bcm2835-v4l2</span>
+  <span class="kw-inv">libcamerify</span>
+  <span class="kw">memsink</span>
+  <span class="kw">H.264 M2M</span>
+  <span class="kw">drop-same-frames</span>
+  <span class="kw-inv">zero-copy</span>
+  <span class="kw">UVC</span>
+  <span class="kw">libjpeg</span>
+</div>
+
+<footer class="footer">
+  SPEC SUB-FILE · µStreamer · Arq. 6 Poster ·
+  Fuente: web-rtc-ext.md EXT-9 (§9.1–9.6)
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SPEC · Deploy Arq. 1</title>
+<link rel="stylesheet" href="../poster-template/fanzine.css">
+</head>
+<body>
+
+<div class="nav-back">
+  <a href="../poster-arq1.html">◀ VOLVER AL POSTER</a> · SPEC · Deploy Arq. 1
+</div>
+
+<header class="header" style="padding:18px 10px 14px;">
+  <div class="stamp">DEPLOY</div>
+  <h1 style="font-size:1.8rem;">Deploy Arq. 1</h1>
+  <div class="sub">go2rtc relay integral — instalación, systemd, Docker, detección CSI/USB, monitoreo</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ═══ PRE-FLIGHT ═══ -->
+<div class="cutout">
+  <h3>Pre-Flight Checklist</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>#</th><th>Check</th><th>Comando</th><th>Esperado</th></tr>
+    <tr><td>1</td><td>Cámara V4L2</td><td><span class="hl-box">v4l2-ctl --list-devices</span></td><td>/dev/video0 presente</td></tr>
+    <tr><td>2</td><td>Formatos cámara</td><td><span class="hl-box">v4l2-ctl -d /dev/video0 --list-formats-ext</span></td><td>MJPEG y/o H.264</td></tr>
+    <tr><td>3</td><td>Micrófono ALSA</td><td><span class="hl-box">arecord -l</span></td><td>Al menos 1 card</td></tr>
+    <tr><td>4</td><td>Puerto 1984 libre</td><td><span class="hl-box">ss -tlnp | grep 1984</span></td><td>(vacío)</td></tr>
+    <tr><td>5</td><td>RAM disponible</td><td><span class="hl-box">free -m | awk '/Mem/{print $7}'</span></td><td>≥ 500 MB</td></tr>
+    <tr><td>6</td><td>GPU mem (CSI)</td><td><span class="hl-box">vcgencmd get_mem gpu</span></td><td>gpu=128M (si CSI con rpicam-vid exec)</td></tr>
+    <tr><td>7</td><td>Binario descargado</td><td><span class="hl-box">./go2rtc --version</span></td><td>v1.x.x</td></tr>
+  </table>
+</div>
+
+<!-- ═══ INSTALL ═══ -->
+<div class="cutout tilt-r">
+  <h3>Instalación del Binario</h3>
+  <div class="cmd"><span class="comment"># Descargar release ARM para RPi 3B</span>
+VERSION="1.9.9"
+wget -q "https://github.com/AlexxIT/go2rtc/releases/download/v${VERSION}/go2rtc_linux_arm"
+chmod +x go2rtc_linux_arm
+sudo mv go2rtc_linux_arm /usr/local/bin/go2rtc
+
+<span class="comment"># Crear directorio de config</span>
+sudo mkdir -p /etc/go2rtc
+sudo cp go2rtc.yaml /etc/go2rtc/go2rtc.yaml</div>
+  <div class="tip">Binario Go estático: sin dependencias de runtime. ARM (32-bit) es compatible con RPi 3B (BCM2837 ARMv8 ejecutando OS 32-bit).</div>
+</div>
+
+<!-- ═══ HARDWARE DETECT ═══ -->
+<div class="cutout tilt-l">
+  <h3>Detección CSI / USB</h3>
+  <div class="cmd"><span class="comment">#!/bin/bash — hardware_detect.sh</span>
+<span class="comment"># Detecta tipo de cámara y ajusta go2rtc.yaml</span>
+
+CONFIG_DIR="/etc/go2rtc"
+
+if libcamera-hello --list-cameras 2&gt;/dev/null | grep -q "Available cameras: [1-9]"; then
+  echo "[detect] CSI → go2rtc con exec:rpicam-vid (HW encode)"
+  cp "$CONFIG_DIR/go2rtc-csi.yaml" "$CONFIG_DIR/go2rtc.yaml"
+
+elif [ -e /dev/video0 ]; then
+  <span class="comment"># Detectar si USB tiene H.264 HW</span>
+  if v4l2-ctl -d /dev/video0 --list-formats-ext 2&gt;/dev/null | grep -q "H.264"; then
+    echo "[detect] USB con H.264 HW → passthrough"
+    cp "$CONFIG_DIR/go2rtc-usb-h264.yaml" "$CONFIG_DIR/go2rtc.yaml"
+  else
+    echo "[detect] USB MJPEG → standard V4L2"
+    cp "$CONFIG_DIR/go2rtc-usb.yaml" "$CONFIG_DIR/go2rtc.yaml"
+  fi
+
+else
+  echo "[detect] ERROR: No camera found"
+  exit 1
+fi</div>
+  <div class="tip">A diferencia de MediaMTX (Arq. 2), go2rtc soporta ambos tipos de cámara de forma nativa. La detección solo optimiza la config, no cambia la arquitectura.</div>
+</div>
+
+<!-- ═══ SYSTEMD ═══ -->
+<div class="cutout">
+  <h3>Unidad systemd</h3>
+  <div class="cmd"><span class="comment"># /etc/systemd/system/go2rtc.service</span>
+[Unit]
+Description=go2rtc Media Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=go2rtc
+Group=video,audio
+ExecStartPre=/usr/local/bin/hardware_detect.sh
+ExecStart=/usr/local/bin/go2rtc -config /etc/go2rtc/go2rtc.yaml
+Restart=on-failure
+RestartSec=5
+MemoryMax=100M
+CPUQuota=50%
+StandardOutput=journal
+StandardError=journal
+SupplementaryGroups=video audio
+
+<span class="comment"># Seguridad</span>
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/run/go2rtc
+
+[Install]
+WantedBy=multi-user.target</div>
+  <div class="cmd"><span class="comment"># Activar</span>
+sudo useradd -r -s /usr/sbin/nologin -G video,audio go2rtc
+sudo systemctl daemon-reload
+sudo systemctl enable --now go2rtc</div>
+</div>
+
+<!-- ═══ DOCKER ═══ -->
+<div class="cutout tilt-r">
+  <h3>Docker (alternativa)</h3>
+  <div class="cmd"><span class="comment"># docker-compose.yml</span>
+services:
+  go2rtc:
+    image: alexxit/go2rtc:latest
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - /etc/go2rtc/go2rtc.yaml:/config/go2rtc.yaml:ro
+    devices:
+      - /dev/video0:/dev/video0     <span class="comment"># cámara (CSI o USB)</span>
+      - /dev/vchiq:/dev/vchiq       <span class="comment"># CSI VideoCore (si aplica)</span>
+      - /dev/snd:/dev/snd           <span class="comment"># audio ALSA</span>
+    group_add:
+      - video
+      - audio
+    mem_limit: 100m
+    cpus: 0.5</div>
+  <div class="tip"><code>network_mode: host</code> evita port mapping complejo. <code>/dev/snd</code> expone ALSA para captura de audio. <code>/dev/vchiq</code> solo necesario si CSI con rpicam-vid exec.</div>
+</div>
+
+<!-- ═══ OASIS PROXY ═══ -->
+<div class="cutout">
+  <h3>Proxy Oasis (Node.js)</h3>
+  <div class="cmd"><span class="comment">// routes.js — proxy HTTP a go2rtc (cero carga media en Node)</span>
+const http = require('http');
+
+function proxyGo2rtc(localPath, go2rtcPath) {
+  return (req, res) =&gt; {
+    const proxyReq = http.request(
+      { hostname: '127.0.0.1', port: 1984, path: go2rtcPath, method: 'GET' },
+      (proxyRes) =&gt; {
+        res.writeHead(proxyRes.statusCode, proxyRes.headers);
+        proxyRes.pipe(res);
+      }
+    );
+    proxyReq.on('error', () =&gt; res.status(502).end());
+    proxyReq.end();
+  };
+}
+
+<span class="comment">// Registrar rutas</span>
+app.get('/video.mjpeg', proxyGo2rtc('/video.mjpeg', '/api/stream.mjpeg?src=solar-cam'));
+app.get('/video.m3u8',  proxyGo2rtc('/video.m3u8',  '/api/stream.m3u8?src=solar-cam'));
+app.get('/snapshot',    proxyGo2rtc('/snapshot',     '/api/frame.jpeg?src=solar-cam'));</div>
+  <div class="warn">Node.js actúa como proxy puro (pipe). Cero buffer en memoria, cero CPU de media. El browser ve rutas limpias bajo el dominio Oasis.</div>
+</div>
+
+<!-- ═══ FALLBACK ═══ -->
+<div class="cutout tilt-l">
+  <h3>Estrategia de Fallback</h3>
+  <pre class="ascii-diagram">
+┌──────────────────────────────────────────────┐
+│           hardware_detect.sh                 │
+│                                              │
+│  ¿V4L2 detectado?                            │
+│    SÍ → go2rtc (Arq. 1)        ← ESTÁNDAR   │
+│    NO → ERROR (sin cámara)                   │
+│                                              │
+│  Fallback de servicio:                       │
+│    go2rtc crash (3×) → µStreamer (MJPEG)     │
+│    µStreamer crash    → snapshot cron         │
+│                                              │
+│  Escalado futuro:                            │
+│    Fase 3 + Tor → migrar a Arq. 3 (Mumble)  │
+│    Solo LAN + RAM mín → Arq. 6 (µStreamer)   │
+└──────────────────────────────────────────────┘</pre>
+</div>
+
+<!-- ═══ MONITORING ═══ -->
+<div class="cutout">
+  <h3>Monitoreo</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Métrica</th><th>Comando / Endpoint</th><th>Umbral alarma</th></tr>
+    <tr><td>Streams activos</td><td>curl -s localhost:1984/api/streams | jq 'length'</td><td>= 0 (sin cámara)</td></tr>
+    <tr><td>Consumers</td><td>curl -s localhost:1984/api/streams | jq '.[].consumers | length'</td><td>Informativo</td></tr>
+    <tr><td>RAM proceso</td><td>ps -o rss= -p $(pgrep go2rtc) | awk '{print $1/1024"M"}'</td><td>&gt; 80 MB</td></tr>
+    <tr><td>CPU</td><td>top -bn1 -p $(pgrep go2rtc) | awk 'NR&gt;7{print $9}'</td><td>&gt; 40%</td></tr>
+    <tr><td>GPU temp</td><td>vcgencmd measure_temp</td><td>&gt; 70°C</td></tr>
+    <tr><td>Servicio activo</td><td>systemctl is-active go2rtc</td><td>!= active</td></tr>
+    <tr><td>MJPEG accesible</td><td>curl -so /dev/null -w '%{http_code}' localhost:1984/api/frame.jpeg?src=solar-cam</td><td>!= 200</td></tr>
+  </table>
+</div>
+
+<!-- ═══ RESOURCE BUDGET ═══ -->
+<div class="cutout tilt-r">
+  <h3>Presupuesto de Recursos</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Componente</th><th>RAM</th><th>CPU idle</th><th>CPU stream</th></tr>
+    <tr><td>go2rtc (V4L2 + ALSA)</td><td>~20–40 MB</td><td>~1%</td><td>~5–20%</td></tr>
+    <tr><td>Oasis (Node.js)</td><td>~80 MB</td><td>~2%</td><td>~1% (proxy)</td></tr>
+    <tr><td>node-datachannel (opcional)</td><td>~20 MB</td><td>~0%</td><td>~5%</td></tr>
+    <tr><td>Sistema (Bookworm)</td><td>~120 MB</td><td>—</td><td>—</td></tr>
+    <tr class="highlight-row"><td><b>TOTAL</b></td><td><b>~240–260 MB</b></td><td>~3%</td><td>~11–26%</td></tr>
+    <tr><td colspan="4" style="text-align:center;"><b>Disponible en 1 GB: ~740–760 MB libres</b></td></tr>
+  </table>
+  <div class="tip">Similar a Arq. 2 (~250 MB), pero sin restricción de cámara: CSI y USB sin cambio de arquitectura. CPU más variable porque depende de re-encode.</div>
+</div>
+
+<!-- ═══ KEYWORDS ═══ -->
+<div class="cutout" style="text-align:center;">
+  <span class="kw">deploy</span>
+  <span class="kw-inv">systemd</span>
+  <span class="kw">Docker</span>
+  <span class="kw-inv">hardware_detect</span>
+  <span class="kw">V4L2</span>
+  <span class="kw-inv">ALSA</span>
+  <span class="kw">fallback</span>
+  <span class="kw-inv">monitoreo</span>
+  <span class="kw">proxy</span>
+  <span class="kw-inv">~250 MB</span>
+</div>
+
+<footer class="footer">
+  SPEC · Deploy Arq. 1 · SSB-WebRTC · Solar Net Hub
+</footer>
+
+</body>
+</html>

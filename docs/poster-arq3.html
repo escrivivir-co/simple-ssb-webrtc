@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ARQ. 3 — SOFTWARE SPEC POSTER</title>
+<link rel="stylesheet" href="poster-template/fanzine.css">
+</head>
+<body>
+
+<!-- ════════════ HEADER ════════════ -->
+<header class="header">
+  <div class="stamp">SOLAR NET HUB</div>
+  <h1>Arq. 3</h1>
+  <div class="sub">go2rtc + Mumble + node-datachannel</div>
+  <div class="sub2">Software Specification — RPi 3B — LAN + Remoto, Cero JS, Tor Ready</div>
+  <div class="issue">web-rtc-ext.md · EXT-5C / EXT-7 · Camino C</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ════════════ SPEC INDEX ════════════ -->
+<div class="cutout" style="text-align:center;">
+  <h3>☞ Deep-Dive Specs</h3>
+  <a class="deep-link" href="spec-arq3/go2rtc.html">go2rtc — YAML config, endpoints, protocolos, WHEP</a><br>
+  <a class="deep-link" href="spec-arq3/mumble-bridge.html">Mumble Bridge — audio pipeline, latencia, murmurd config</a><br>
+  <a class="deep-link" href="spec-arq3/oasis-proxy.html">Oasis Proxy — routes, templates, HLS + MJPEG, CSP</a><br>
+  <a class="deep-link" href="spec-arq3/datachannel.html">node-datachannel — signaling SDP/ICE via SSB, file transfer</a><br>
+  <a class="deep-link" href="spec-arq3/deploy.html">Deploy &amp; Ops — systemd, Docker, monitoring, pre-flight</a>
+</div>
+
+<!-- ════════════ STATS ════════════ -->
+<div class="stats-bar tilt-r">
+  <div class="stat"><span class="val">~20 MB</span><span class="lbl">RAM go2rtc</span></div>
+  <div class="stat"><span class="val">+0 MB</span><span class="lbl">Mumble (ya corre)</span></div>
+  <div class="stat"><span class="val">~65 MB</span><span class="lbl">Total stack</span></div>
+  <div class="stat"><span class="val">1 GB</span><span class="lbl">LPDDR2 total</span></div>
+  <div class="stat"><span class="val">0</span><span class="lbl">JS en browser</span></div>
+</div>
+
+<!-- ════════════ DIAGRAM ════════════ -->
+<div class="cutout diagram-wrap">
+  <div class="tape tape-tl"></div>
+  <div class="tape tape-tr"></div>
+  <h2>☞ Esquema de Arquitectura</h2>
+<pre class="diagram">
+ ┌──────────────────────────────────────────────────────────────────┐
+ │              RASPBERRY PI 3B  ·  SOLAR NET HUB                  │
+ │              BCM2837 · Cortex-A53 · VideoCore IV                │
+ │                                                                  │
+ │  ┌──────────┐  V4L2   ┌─────────────────────────┐              │
+ │  │ 🎥 CAM   │────────▷│ go2rtc          :1984   │              │
+ │  │ CSI/USB  │         │ ┌───────────────────────┐│              │
+ │  └──────────┘         │ │MJPEG · HLS · RTSP     ││              │
+ │                       │ │WebRTC (WHEP) · snap    ││              │
+ │  ┌──────────┐  ALSA   │ │ALSA direct capture    ││              │
+ │  │ 🎤 MIC   │────────▷│ └───────────────────────┘│              │
+ │  └──────────┘         └──────────┬──────────────┘               │
+ │                                  │ localhost                     │
+ │  ┌──────────┐  ALSA   ┌─────────┼──────────┐                   │
+ │  │ 🎤 MIC   │────────▷│ murmurd │  :64738  │                   │
+ │  └──────────┘         │ (Mumble,│ya activo) │                   │
+ │                       │ audio   │bidirecc.  │                   │
+ │                       └─────────┼──────────┘                    │
+ │                                 │ localhost                      │
+ │  ┌──────────────────────────────┴────────────────────────────┐  │
+ │  │  OASIS  :3000   (Node.js · SSB · cero JS en browser)     │  │
+ │  │                                                           │  │
+ │  │   GET /video     ──▷ proxy go2rtc MJPEG                  │  │
+ │  │   GET /video.m3u8 ─▷ proxy go2rtc HLS (remoto)           │  │
+ │  │   GET /snapshot  ──▷ proxy go2rtc JPEG                   │  │
+ │  │   GET /audio     ──▷ bridge Mumble Opus→OGG              │  │
+ │  │                                                           │  │
+ │  │   HTML: &lt;img src="/video"&gt; + &lt;audio src="/audio"&gt;        │  │
+ │  │   Remote: &lt;video src="/video.m3u8"&gt; (HLS, sin JS)        │  │
+ │  │                                                           │  │
+ │  │   ┌─────────────────────────────────────┐                 │  │
+ │  │   │ node-datachannel (P2P DataChannels) │                 │  │
+ │  │   │ texto · archivos · señalización     │                 │  │
+ │  │   └─────────────────────────────────────┘                 │  │
+ │  └───────────────────────────────────────────────────────────┘  │
+ └──────────────────────────────────────────────────────────────────┘
+          │                │                │                │
+          ▼                ▼                ▼                ▼
+   ┌────────────┐  ┌─────────────┐  ┌────────────┐  ┌────────────┐
+   │ 📺 BROWSER │  │ 🔊 MUMBLE  │  │ 📡 PEER   │  │ 🌐 REMOTE │
+   │ LAN (no JS)│  │ (cliente    │  │ P2P data  │  │ HLS viewer │
+   │ &lt;img&gt;MJPEG │  │  nativo)    │  │ node-dc   │  │ &lt;video&gt;HLS │
+   │ &lt;audio&gt;OGG │  │  RTT ~20ms  │  │ text/file │  │ via Tor OK │
+   └────────────┘  └─────────────┘  └────────────┘  └────────────┘
+</pre>
+</div>
+
+<!-- ════════════ CALLOUT ════════════ -->
+<div class="callout tilt-l">
+  la navaja suiza: MJPEG local + HLS remoto + Tor, un solo binario Go
+</div>
+
+<!-- ════════════ KEY CONCEPTS (collapsible) ════════════ -->
+<div class="cutout">
+  <h3>Key Concepts</h3>
+
+  <details>
+    <summary>¿Por qué go2rtc y no ffmpeg directo?</summary>
+    <div class="detail-body">
+      <div class="key-concept">go2rtc captura <b>directamente</b> de V4L2 (cámara) y ALSA (mic) sin lanzar ffmpeg como subproceso. Un solo binario Go sirve MJPEG + HLS + RTSP + WebRTC. ffmpeg solo entra si se necesita transcodificación especial.</div>
+      <div class="tip">go2rtc usa ffmpeg internamente <b>bajo demanda</b> solo para resampling WebRTC o formatos exóticos. Para MJPEG/HLS básico no lo necesita.</div>
+    </div>
+  </details>
+
+  <details>
+    <summary>¿Por qué Mumble para audio y no go2rtc?</summary>
+    <div class="detail-body">
+      <div class="key-concept"><b>Audio bidireccional</b>: go2rtc solo envía audio (downstream). Mumble es full-duplex nativo. Además murmurd ya está corriendo → +0 MB de RAM nueva. Y funciona sobre <b>Tor</b> (TCP tunnel), mientras que go2rtc ALSA solo sirve por HTTP local.</div>
+    </div>
+  </details>
+
+  <details>
+    <summary>HLS: cómo funciona sin JS</summary>
+    <div class="detail-body">
+      <div class="key-concept">HLS usa <b>&lt;video src="/video.m3u8"&gt;</b> — los browsers modernos (Safari nativo, Firefox/Chrome con soporte MSE via <b>hls.js</b>... pero queremos cero JS). En el browser local del SNH usamos <b>MJPEG</b> (sin JS). HLS es para el <b>peer remoto</b> que accede vía Tor con un browser estándar que SÍ tiene JS.</div>
+      <div class="warn"><b>HLS sin JS</b> solo funciona nativamente en Safari. Para Firefox/Chrome remoto se necesitaría hls.js (JS). Alternativa sin JS para remoto: MJPEG directo (pero más BW sobre Tor).</div>
+    </div>
+  </details>
+
+  <details>
+    <summary>Doble salida: LAN (MJPEG) vs Remoto (HLS)</summary>
+    <div class="detail-body">
+      go2rtc sirve <b>ambos formatos en paralelo</b> desde la misma fuente V4L2:
+      <div class="cmd">GET /api/frame.mjpeg?src=solar-cam  → MJPEG continuo (LAN, <b>&lt;img&gt;</b>)
+GET /api/stream.m3u8?src=solar-cam  → HLS playlist (remoto, <b>&lt;video&gt;</b>)
+GET /api/frame.jpeg?src=solar-cam   → Snapshot JPEG (thumbnails, SSB blobs)</div>
+      <div class="tip"><b>BW savings</b>: HLS usa H.264, ×10 menos BW que MJPEG. Para peers remotos sobre Tor (ancho de banda limitado), HLS es esencial.</div>
+    </div>
+  </details>
+</div>
+
+<!-- ════════════ TWO COLUMNS ════════════ -->
+<div class="cols">
+
+  <div class="col">
+    <div class="cutout tilt-l">
+      <div class="tape tape-tr"></div>
+      <h3>Componentes</h3>
+
+      <div class="card">
+        <div class="card-title">go2rtc</div>
+        <div class="card-port">:1984</div>
+        <div class="card-body">
+          Lenguaje: <b>Go</b> (binario estático ~15 MB)<br>
+          Repo: AlexxIT/go2rtc<br>
+          RAM: <b>~20–40 MB</b><br>
+          Entrada: V4L2, ALSA, RTSP, ffmpeg exec<br>
+          Salida: MJPEG, HLS, RTSP, WebRTC (WHEP)<br>
+          Config: <span class="hl-box">go2rtc.yaml</span>
+        </div>
+      </div>
+
+      <details>
+        <summary>go2rtc.yaml — config mínima</summary>
+        <div class="detail-body">
+          <div class="cmd"><span class="comment"># /etc/go2rtc/go2rtc.yaml</span>
+streams:
+  solar-cam:
+    - v4l2:///dev/video0
+  solar-mic:
+    - alsa:///default
+
+api:
+  listen: "127.0.0.1:1984"</div>
+          <div class="tip">Si la cámara CSI necesita libcamera: usar <b>exec:libcamerify...</b> en vez de v4l2 directo.</div>
+        </div>
+      </details>
+
+      <div class="card">
+        <div class="card-title">murmurd (Mumble)</div>
+        <div class="card-port">:64738</div>
+        <div class="card-body">
+          Audio bidireccional · Opus codec<br>
+          Ya instalado y corriendo → <b>+0 MB</b><br>
+          Compatible Tor (TCP tunnel)<br>
+          Latencia: ~20 ms (nativo) / ~200 ms (bridge)
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">node-datachannel</div>
+        <div class="card-port">P2P</div>
+        <div class="card-body">
+          DataChannels WebRTC sin media<br>
+          Texto, archivos, señalización<br>
+          Corre dentro de Oasis (Node.js)<br>
+          No transporta audio ni vídeo
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="cutout tilt-r">
+      <div class="tape tape-tl"></div>
+      <h3>Ficha Rápida</h3>
+      <table class="tbl">
+        <tr><th>Propiedad</th><th>Estado</th></tr>
+        <tr><td>Cero JS en browser LAN</td><td class="check">✔</td></tr>
+        <tr><td>Cámara CSI</td><td class="check">✔</td></tr>
+        <tr><td>Cámara USB</td><td class="check">✔</td></tr>
+        <tr><td>Audio bidireccional</td><td class="check">✔</td></tr>
+        <tr><td>Funciona sobre Tor</td><td class="check">✔</td></tr>
+        <tr><td>Escritura a microSD</td><td class="check">✘ (no)</td></tr>
+        <tr><td>MJPEG streaming</td><td class="check">✔</td></tr>
+        <tr><td>HLS para remoto</td><td class="check"><b>✔</b></td></tr>
+        <tr><td>WebRTC WHEP (media)</td><td class="check">✔</td></tr>
+        <tr><td>RTSP output</td><td class="check">✔</td></tr>
+        <tr><td>DataChannels P2P (data)</td><td class="check">✔</td></tr>
+        <tr><td>RAM nuevos procesos</td><td class="check"><b>~65 MB</b></td></tr>
+      </table>
+    </div>
+
+    <div class="cutout tilt-l2" style="margin-top:12px;">
+      <h3>¿Cuándo Elegir Arq. 3?</h3>
+      <div style="font-size:0.7rem;">
+        <b>✔ SÍ cuando:</b><br>
+        · Necesitas LAN <b>y</b> remoto (HLS)<br>
+        · Peers acceden vía Tor<br>
+        · Quieres multi-protocolo (MJPEG+HLS+RTSP)<br>
+        · Audio bidireccional es requisito<br>
+        · Cámara puede ser CSI o USB (flexibilidad)<br><br>
+        <b>✘ NO cuando:</b><br>
+        · Solo LAN + RAM ultra-crítica<br>
+        → Usa <b>Arq. 6</b> (µStreamer, 10 MB menos)<br>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════ SETUP ════════════ -->
+<div class="cutout tilt-r2">
+  <div class="tape tape-tl"></div>
+  <div class="tape tape-br"></div>
+  <h3>☞ Setup Técnico</h3>
+
+  <div class="step-title">1. INSTALAR go2rtc</div>
+  <div class="cmd"><span class="comment"># Descargar binario ARM (no hay paquete Debian)</span>
+<span class="prompt">wget -O /usr/local/bin/go2rtc \</span>
+    https://github.com/AlexxIT/go2rtc/releases/latest/download/go2rtc_linux_arm
+<span class="prompt">chmod +x /usr/local/bin/go2rtc</span></div>
+
+  <details>
+    <summary>Alt: compile from source</summary>
+    <div class="detail-body">
+      <div class="cmd"><span class="prompt">git clone https://github.com/AlexxIT/go2rtc</span>
+<span class="prompt">cd go2rtc &amp;&amp; go build -o go2rtc</span>
+<span class="prompt">sudo mv go2rtc /usr/local/bin/</span></div>
+      <div class="warn">Requiere Go 1.21+. En Bookworm ARM: <b>apt install golang</b> o usar binario precompilado.</div>
+    </div>
+  </details>
+
+  <div class="step-title">2. CONFIGURAR go2rtc</div>
+  <div class="cmd"><span class="comment"># /etc/go2rtc/go2rtc.yaml</span>
+streams:
+  solar-cam:
+    - v4l2:///dev/video0       <span class="comment"># USB</span>
+  solar-cam-csi:
+    - "exec:libcamerify v4l2-ctl --stream"  <span class="comment"># CSI alt</span>
+
+api:
+  listen: "127.0.0.1:1984"    <span class="comment"># solo local</span></div>
+
+  <details>
+    <summary>Config avanzada: ALSA, RTSP in, multi-stream</summary>
+    <div class="detail-body">
+      <div class="cmd">streams:
+  solar-cam:
+    - v4l2:///dev/video0
+  solar-mic:
+    - alsa:///default
+  ext-cam:
+    - rtsp://192.168.1.50/stream1  <span class="comment"># cámara IP externa</span>
+
+api:
+  listen: "127.0.0.1:1984"
+
+webrtc:
+  candidates:
+    - 192.168.1.10:8555  <span class="comment"># IP LAN fija para WHEP</span></div>
+      <div class="tip">go2rtc puede agregar múltiples fuentes (V4L2 + RTSP + ALSA) y servirlas todas desde los mismos endpoints HTTP.</div>
+    </div>
+  </details>
+
+  <div class="step-title">3. INICIAR go2rtc</div>
+  <div class="cmd"><span class="prompt">go2rtc -config /etc/go2rtc/go2rtc.yaml</span></div>
+
+  <div class="step-title">4. MUMBLE (ya corriendo)</div>
+  <div class="cmd"><span class="comment"># murmurd ya activo en :64738</span>
+<span class="comment"># bridge audio para &lt;audio&gt; en browser:</span>
+<span class="prompt">ffmpeg -i mumble://localhost:64738 \</span>
+    -c:a libvorbis -f ogg pipe:1 | \
+    node oasis-audio-bridge.js</div>
+
+  <div class="step-title">5. HTML EN OASIS (cero JS)</div>
+  <div class="cmd"><span class="comment">&lt;!-- LAN: MJPEG + OGG audio --&gt;</span>
+&lt;img src="/video" alt="stream"&gt;
+&lt;audio src="/audio" controls autoplay&gt;&lt;/audio&gt;
+
+<span class="comment">&lt;!-- Remoto: HLS (para browsers con soporte nativo) --&gt;</span>
+&lt;video src="/video.m3u8" controls autoplay&gt;&lt;/video&gt;</div>
+
+  <div class="step-title">6. PROXY EN OASIS (Node.js)</div>
+  <div class="cmd"><span class="comment">// routes — proxy go2rtc</span>
+const GO2RTC = 'http://127.0.0.1:1984';
+
+app.get('/video', (req, res) =&gt; {
+  const up = http.get(
+    `${GO2RTC}/api/frame.mjpeg?src=solar-cam`,
+    (mjpeg) =&gt; {
+      res.writeHead(200, {
+        'Content-Type': mjpeg.headers['content-type'],
+        'Cache-Control': 'no-store'
+      });
+      mjpeg.pipe(res);
+    }
+  );
+  req.on('close', () =&gt; up.destroy());
+});
+
+app.get('/video.m3u8', (req, res) =&gt; {
+  const up = http.get(
+    `${GO2RTC}/api/stream.m3u8?src=solar-cam`,
+    (hls) =&gt; {
+      res.writeHead(200, hls.headers);
+      hls.pipe(res);
+    }
+  );
+  req.on('close', () =&gt; up.destroy());
+});
+
+app.get('/snapshot', (req, res) =&gt; {
+  const up = http.get(
+    `${GO2RTC}/api/frame.jpeg?src=solar-cam`,
+    (snap) =&gt; {
+      res.writeHead(200, {
+        'Content-Type': 'image/jpeg',
+        'Cache-Control': 'no-store'
+      });
+      snap.pipe(res);
+    }
+  );
+  req.on('close', () =&gt; up.destroy());
+});</div>
+
+  <details>
+    <summary>Security headers middleware</summary>
+    <div class="detail-body">
+      <div class="cmd">app.use((req, res, next) =&gt; {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Content-Security-Policy',
+    "default-src 'self'; img-src 'self'; " +
+    "media-src 'self'; style-src 'self' 'unsafe-inline'; " +
+    "script-src 'none'"
+  );
+  next();
+});</div>
+      <div class="tip"><b>script-src 'none'</b>: refuerza cero JS a nivel CSP. Si el remote necesita hls.js, crear una ruta /remote con CSP más permisiva.</div>
+    </div>
+  </details>
+</div>
+
+<div class="washi"></div>
+
+<!-- ════════════ RESOURCE TABLE ════════════ -->
+<div class="cutout">
+  <h3>Budget de Recursos</h3>
+  <table class="tbl">
+    <tr><th>Componente</th><th>RAM</th><th>CPU idle</th><th>CPU streaming</th><th>Notas</th></tr>
+    <tr><td><b>murmurd</b> (ya corre)</td><td>~10 MB</td><td>~0%</td><td>~2–5%</td><td>Opus C++, ya existente</td></tr>
+    <tr><td><b>gumble bridge</b></td><td>~5 MB</td><td>~0%</td><td>~1%</td><td>Go estático, forwarding</td></tr>
+    <tr><td><b>ffmpeg</b> (audio bridge)</td><td>~15 MB</td><td>~0%</td><td>~3%</td><td>PCM→OGG, un stream</td></tr>
+    <tr><td><b>go2rtc</b></td><td>~20 MB</td><td>~0%</td><td>~5–10%</td><td>V4L2→MJPEG/HLS</td></tr>
+    <tr><td><b>node-datachannel</b></td><td>~15 MB</td><td>~0%</td><td>~1%</td><td>Solo DataChannel, sin media</td></tr>
+    <tr><td style="border-top:3px solid #000;"><b>TOTAL Arq. 3</b></td><td style="border-top:3px solid #000;"><b>~65 MB</b></td><td style="border-top:3px solid #000;"></td><td style="border-top:3px solid #000;"><b>~12–20%</b></td><td style="border-top:3px solid #000;"></td></tr>
+  </table>
+
+  <details>
+    <summary>Comparación con otras arquitecturas</summary>
+    <div class="detail-body">
+      <table class="tbl">
+        <tr><th></th><th>RAM total</th><th>CPU streaming</th><th>HLS</th><th>Tor</th><th>Bidireccional</th></tr>
+        <tr><td><b>Arq. 3 (esta)</b></td><td><b>~65 MB</b></td><td>~12–20%</td><td>✔</td><td>✔</td><td>✔</td></tr>
+        <tr><td>Arq. 6 (µStreamer)</td><td>~10–20 MB</td><td>~5–15%</td><td>✘</td><td>✔</td><td>✔</td></tr>
+        <tr><td>Arq. 1 (go2rtc integral)</td><td>~70 MB</td><td>~10–15%</td><td>✔</td><td>⚠️</td><td>✘</td></tr>
+        <tr><td>Camino A (todo Node.js)</td><td>~80 MB</td><td>~20–30%</td><td>✔</td><td>✔</td><td>✔</td></tr>
+      </table>
+      <div class="key-concept">Arq. 3 = mejor <b>equilibrio versatilidad / recursos</b>. Solo Arq. 6 gasta menos RAM, pero pierde HLS y multi-protocolo.</div>
+    </div>
+  </details>
+</div>
+
+<!-- ════════════ go2rtc ENDPOINTS CHEATSHEET ════════════ -->
+<div class="cutout tilt-l">
+  <h3>go2rtc Endpoints — Cheatsheet</h3>
+  <table class="tbl">
+    <tr><th>Endpoint</th><th>Content-Type</th><th>Uso</th></tr>
+    <tr><td><b>/api/frame.mjpeg?src=</b></td><td>multipart/x-mixed-replace</td><td>MJPEG continuo → &lt;img&gt;</td></tr>
+    <tr><td><b>/api/stream.m3u8?src=</b></td><td>application/vnd.apple.mpegurl</td><td>HLS playlist → &lt;video&gt;</td></tr>
+    <tr><td><b>/api/frame.jpeg?src=</b></td><td>image/jpeg</td><td>Snapshot único → SSB blob</td></tr>
+    <tr><td><b>/api/stream.mp4?src=</b></td><td>video/mp4</td><td>MP4 progressive download</td></tr>
+    <tr><td><b>/api/webrtc?src=</b></td><td>application/sdp (WHEP)</td><td>WebRTC P2P (necesita JS)</td></tr>
+    <tr><td><b>/api/streams</b></td><td>application/json</td><td>Lista streams configurados</td></tr>
+  </table>
+
+  <details>
+    <summary>Verificar endpoints con curl</summary>
+    <div class="detail-body">
+      <div class="cmd"><span class="comment"># Snapshot rápido</span>
+<span class="prompt">curl -o snap.jpg http://127.0.0.1:1984/api/frame.jpeg?src=solar-cam</span>
+
+<span class="comment"># Verificar MJPEG headers</span>
+<span class="prompt">curl -I http://127.0.0.1:1984/api/frame.mjpeg?src=solar-cam</span>
+
+<span class="comment"># Ver streams configurados</span>
+<span class="prompt">curl -s http://127.0.0.1:1984/api/streams | python3 -m json.tool</span>
+
+<span class="comment"># HLS: verificar playlist</span>
+<span class="prompt">curl -s http://127.0.0.1:1984/api/stream.m3u8?src=solar-cam | head</span></div>
+    </div>
+  </details>
+</div>
+
+<!-- ════════════ COMPARISON vs ARQ 6 ════════════ -->
+<div class="cutout tilt-r">
+  <h3>Arq. 3 vs Arq. 6 — Trade-offs</h3>
+  <table class="tbl">
+    <tr>
+      <th></th>
+      <th>Arq. 3 (go2rtc + Mumble)</th>
+      <th>Arq. 6 (µStreamer + Mumble)</th>
+    </tr>
+    <tr>
+      <td><b>RAM nuevos</b></td>
+      <td>~20 MB (go2rtc)</td>
+      <td>~10 MB (µStreamer) ★</td>
+    </tr>
+    <tr>
+      <td><b>Formatos vídeo</b></td>
+      <td><b>MJPEG, HLS, RTSP, WebRTC ★</b></td>
+      <td>MJPEG solamente</td>
+    </tr>
+    <tr>
+      <td><b>Audio</b></td>
+      <td>Igual (Mumble)</td>
+      <td>Igual (Mumble)</td>
+    </tr>
+    <tr>
+      <td><b>HW JPEG encode</b></td>
+      <td>✘ (go2rtc no usa M2M)</td>
+      <td>✔ (V4L2 M2M nativo) ★</td>
+    </tr>
+    <tr>
+      <td><b>HLS para remoto</b></td>
+      <td><b>✔ ★</b></td>
+      <td>✘ — solo LAN</td>
+    </tr>
+    <tr>
+      <td><b>Remoto Tor</b></td>
+      <td><b>✔ MJPEG + HLS ★</b></td>
+      <td>✔ solo MJPEG (BW alto)</td>
+    </tr>
+    <tr>
+      <td><b>WebRTC WHEP</b></td>
+      <td><b>✔ integrado ★</b></td>
+      <td>✘ (necesitaría Janus)</td>
+    </tr>
+    <tr>
+      <td><b>Install</b></td>
+      <td>Binario manual</td>
+      <td>apt install ★</td>
+    </tr>
+  </table>
+  <div style="font-size:0.65rem;margin-top:6px;opacity:0.6;">
+    ★ = ventaja. Arq. 3 gana en versatilidad; Arq. 6 gana en ligereza.
+  </div>
+</div>
+
+<!-- ════════════ DRY RULES ════════════ -->
+<div class="cutout">
+  <h3>DRY Rules — Arq. 3</h3>
+  <div style="font-size:0.68rem;">
+    <b>1.</b> go2rtc escucha en <b>127.0.0.1:1984</b> — nunca en 0.0.0.0. Oasis es la puerta única (:3000).<br>
+    <b>2.</b> Audio siempre por <b>Mumble</b> — no por go2rtc ALSA directo (Mumble = bidireccional + Tor).<br>
+    <b>3.</b> Un solo <b>go2rtc.yaml</b> — todas las fuentes declaradas ahí. No flags CLI sueltos.<br>
+    <b>4.</b> Proxy con <b>upstream.destroy() on req.close</b> — evitar socket leaks.<br>
+    <b>5.</b> <b>Cache-Control: no-store</b> en todas las rutas de streaming.<br>
+    <b>6.</b> <b>CSP script-src 'none'</b> en rutas LAN. Si remoto necesita hls.js → ruta /remote con CSP separada.<br>
+    <b>7.</b> Snapshots → guardar como <b>SSB blob</b> (inmutable, content-addressed).<br>
+    <b>8.</b> <b>node-datachannel</b> solo para datos P2P, nunca para media.<br>
+  </div>
+</div>
+
+<!-- ════════════ PHASE MATRIX ════════════ -->
+<div class="cutout tilt-l">
+  <h3>Matriz de Fases × Cámara</h3>
+  <table class="tbl">
+    <tr><th>Cámara</th><th>Fase 1 (LAN)</th><th>Fase 2 (LAN+)</th><th>Fase 3 (Internet)</th><th>Fase 3 + Tor</th></tr>
+    <tr><td><b>CSI</b></td><td>Arq. 6 o Arq. 1</td><td>Arq. 1</td><td><b>Arq. 3 ★</b></td><td><b>Arq. 3 ★</b></td></tr>
+    <tr><td><b>USB</b></td><td>Arq. 6 o Arq. 1</td><td>Arq. 1</td><td><b>Arq. 3 ★</b></td><td><b>Arq. 3 ★</b></td></tr>
+    <tr><td><b>Ambas</b></td><td>Arq. 6/1 + detect</td><td>Arq. 1 + detect</td><td><b>Arq. 3 + detect ★</b></td><td><b>Arq. 3 + detect ★</b></td></tr>
+  </table>
+  <div class="key-concept"><b>Arq. 3 domina toda la columna Fase 3 + Tor</b>. Es la arquitectura de convergencia: la que necesitas cuando el SNH se abre al exterior.</div>
+</div>
+
+<!-- ════════════ KEYWORDS ════════════ -->
+<div class="cutout" style="text-align:center;">
+  <h3>Keywords</h3>
+  <span class="kw">go2rtc</span>
+  <span class="kw-inv">MJPEG</span>
+  <span class="kw">HLS</span>
+  <span class="kw">.m3u8</span>
+  <span class="kw-inv">WHEP</span>
+  <span class="kw">V4L2</span>
+  <span class="kw">ALSA</span>
+  <span class="kw-inv">Mumble</span>
+  <span class="kw">Opus</span>
+  <span class="kw">OGG</span>
+  <span class="kw-inv">Tor</span>
+  <span class="kw">node-datachannel</span>
+  <span class="kw-inv">SCTP</span>
+  <span class="kw">SDP</span>
+  <span class="kw">SSB blob</span>
+  <span class="kw-inv">:1984</span>
+  <span class="kw">:64738</span>
+  <span class="kw-inv">:3000</span>
+  <span class="kw">go2rtc.yaml</span>
+  <span class="kw-inv">proxy pipe</span>
+</div>
+
+<!-- ════════════ FOOTER ════════════ -->
+<footer class="footer">
+  RPi 3B · Yocto Poky 4.3.4 → Docker → Debian Bookworm ·
+  go2rtc (Go ~15 MB) · Mumble :64738 · Oasis :3000 ·
+  Solar 22W · 1 GB LPDDR2 · VideoCore IV ·
+  Generado desde web-rtc-ext.md EXT-5C / EXT-7 · Prioridad 1ª
+</footer>
+
+</body>
+</html>

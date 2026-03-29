@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SPEC · Deploy Arq. 2</title>
+<link rel="stylesheet" href="../poster-template/fanzine.css">
+</head>
+<body>
+
+<div class="nav-back">
+  <a href="../poster-arq2.html">◀ VOLVER AL POSTER</a> · SPEC · Deploy Arq. 2
+</div>
+
+<header class="header" style="padding:18px 10px 14px;">
+  <div class="stamp">DEPLOY</div>
+  <h1 style="font-size:1.8rem;">Deploy Arq. 2</h1>
+  <div class="sub">MediaMTX + rpicam → HLS/WebRTC — Instalación, systemd, Docker, selección CSI/USB, monitoreo</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ═══ PRE-FLIGHT ═══ -->
+<div class="cutout">
+  <h3>Pre-Flight Checklist</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>#</th><th>Check</th><th>Comando</th><th>Esperado</th></tr>
+    <tr><td>1</td><td>CSI conectada</td><td><span class="hl-box">libcamera-hello --list-cameras</span></td><td>Available cameras: 1</td></tr>
+    <tr><td>2</td><td>vchiq permisos</td><td><span class="hl-box">ls -la /dev/vchiq</span></td><td>crw-rw---- video group</td></tr>
+    <tr><td>3</td><td>GPU memory</td><td><span class="hl-box">vcgencmd get_mem gpu</span></td><td>gpu=128M (mínimo)</td></tr>
+    <tr><td>4</td><td>dtoverlay</td><td><span class="hl-box">grep camera /boot/config.txt</span></td><td>camera_auto_detect=1</td></tr>
+    <tr><td>5</td><td>Puerto 8554 libre</td><td><span class="hl-box">ss -tlnp | grep 8554</span></td><td>(vacío)</td></tr>
+    <tr><td>6</td><td>RAM disponible</td><td><span class="hl-box">free -m | awk '/Mem/{print $7}'</span></td><td>≥ 500 MB</td></tr>
+    <tr><td>7</td><td>Binario descargado</td><td><span class="hl-box">./mediamtx --version</span></td><td>v1.x.x</td></tr>
+    <tr><td>8</td><td>USB fallback</td><td><span class="hl-box">v4l2-ctl --list-devices</span></td><td>Detectar /dev/video0 si USB</td></tr>
+  </table>
+</div>
+
+<!-- ═══ INSTALL ═══ -->
+<div class="cutout tilt-r">
+  <h3>Instalación del Binario</h3>
+  <div class="cmd"><span class="comment"># Descargar release ARM para RPi 3B</span>
+VERSION="1.11.1"
+wget -q "https://github.com/bluenviron/mediamtx/releases/download/v${VERSION}/mediamtx_v${VERSION}_linux_armv7.tar.gz"
+tar xzf mediamtx_v${VERSION}_linux_armv7.tar.gz
+sudo mv mediamtx /usr/local/bin/
+sudo mv mediamtx.yml /etc/mediamtx/mediamtx.yml
+chmod +x /usr/local/bin/mediamtx</div>
+  <div class="tip">Go produce binarios estáticos: sin dependencias de runtime. Verificar que armv7 es compatible con RPi 3B (BCM2837 ARMv8 ejecuta ARMv7 en 32-bit OS).</div>
+</div>
+
+<!-- ═══ HARDWARE DETECT ═══ -->
+<div class="cutout tilt-l">
+  <h3>Detección CSI / USB</h3>
+  <div class="cmd"><span class="comment">#!/bin/bash — hardware_detect.sh</span>
+<span class="comment"># Detecta cámara y selecciona config MediaMTX adecuada</span>
+
+CONFIG_DIR="/etc/mediamtx"
+
+if libcamera-hello --list-cameras 2&gt;/dev/null | grep -q "Available cameras: [1-9]"; then
+  echo "[detect] CSI camera detected → rpiCamera source"
+  cp "$CONFIG_DIR/mediamtx-csi.yml" "$CONFIG_DIR/mediamtx.yml"
+elif [ -e /dev/video0 ]; then
+  echo "[detect] USB camera detected → ffmpeg exec source"
+  cp "$CONFIG_DIR/mediamtx-usb.yml" "$CONFIG_DIR/mediamtx.yml"
+  echo "[detect] WARN: go2rtc es mejor opción para USB"
+else
+  echo "[detect] ERROR: No camera found"
+  exit 1
+fi</div>
+  <div class="warn">Si se detecta USB, considerar <b>no arrancar MediaMTX</b> y activar go2rtc (Arq. 3) en su lugar. MediaMTX con USB necesita ffmpeg intermediario → pierde ventaja.</div>
+</div>
+
+<!-- ═══ SYSTEMD ═══ -->
+<div class="cutout">
+  <h3>Unidad systemd</h3>
+  <div class="cmd"><span class="comment"># /etc/systemd/system/mediamtx.service</span>
+[Unit]
+Description=MediaMTX RTSP/HLS/WebRTC Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mediamtx
+Group=video
+ExecStartPre=/usr/local/bin/hardware_detect.sh
+ExecStart=/usr/local/bin/mediamtx /etc/mediamtx/mediamtx.yml
+Restart=on-failure
+RestartSec=5
+MemoryMax=80M
+CPUQuota=40%
+StandardOutput=journal
+StandardError=journal
+SupplementaryGroups=video
+
+<span class="comment"># Seguridad</span>
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/run/mediamtx
+
+[Install]
+WantedBy=multi-user.target</div>
+  <div class="cmd"><span class="comment"># Activar</span>
+sudo useradd -r -s /usr/sbin/nologin -G video mediamtx
+sudo systemctl daemon-reload
+sudo systemctl enable --now mediamtx</div>
+</div>
+
+<!-- ═══ DOCKER ═══ -->
+<div class="cutout tilt-r">
+  <h3>Docker (alternativa)</h3>
+  <div class="cmd"><span class="comment"># docker-compose.yml</span>
+services:
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - /etc/mediamtx/mediamtx.yml:/mediamtx.yml:ro
+    devices:
+      - /dev/vchiq:/dev/vchiq     <span class="comment"># CSI (VideoCore)</span>
+      - /dev/video0:/dev/video0   <span class="comment"># USB (si aplica)</span>
+    group_add:
+      - video
+    mem_limit: 80m
+    cpus: 0.4</div>
+  <div class="tip">network_mode: host es necesario para que los puertos RTSP/HLS/WebRTC funcionen sin port mapping complejo. El dispositivo <code>/dev/vchiq</code> da acceso al coprocesador VideoCore para rpicam nativo.</div>
+</div>
+
+<!-- ═══ FALLBACK STRATEGY ═══ -->
+<div class="cutout">
+  <h3>Estrategia de Fallback</h3>
+  <pre class="ascii-diagram">
+┌─────────────────────────────────────────────┐
+│           hardware_detect.sh                │
+│                                             │
+│  ¿CSI detectada?                            │
+│    SÍ → MediaMTX (rpiCamera)   ← ÓPTIMO    │
+│    NO → ¿USB detectada?                     │
+│           SÍ → go2rtc (V4L2)  ← MEJOR USB  │
+│           NO → ERROR (sin cámara)           │
+│                                             │
+│  Fallback de servicio:                      │
+│    MediaMTX crash (3×) → go2rtc (RTSP in)   │
+│    go2rtc crash (3×)   → µStreamer (MJPEG)  │
+│    todo falla          → snapshot cron      │
+└─────────────────────────────────────────────┘</pre>
+  <div class="tip">Encadenar servicios con <code>OnFailure=</code> en systemd para activar la siguiente arquitectura automáticamente.</div>
+</div>
+
+<!-- ═══ MONITORING ═══ -->
+<div class="cutout tilt-l">
+  <h3>Monitoreo</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Métrica</th><th>Comando / Endpoint</th><th>Umbral alarma</th></tr>
+    <tr><td>Paths activos</td><td>curl -s localhost:9997/v3/paths/list | jq '.items | length'</td><td>= 0 (sin streams)</td></tr>
+    <tr><td>Sesiones WebRTC</td><td>curl -s localhost:9997/v3/webrtcsessions/list | jq '.items | length'</td><td>Informativo</td></tr>
+    <tr><td>RAM proceso</td><td>ps -o rss= -p $(pgrep mediamtx) | awk '{print $1/1024"M"}'</td><td>&gt; 60 MB</td></tr>
+    <tr><td>CPU</td><td>top -bn1 -p $(pgrep mediamtx) | awk 'NR&gt;7{print $9}'</td><td>&gt; 30%</td></tr>
+    <tr><td>GPU temp</td><td>vcgencmd measure_temp</td><td>&gt; 70°C</td></tr>
+    <tr><td>Servicio activo</td><td>systemctl is-active mediamtx</td><td>!= active</td></tr>
+    <tr><td>HLS accesible</td><td>curl -so /dev/null -w '%{http_code}' localhost:8888/solar-cam/</td><td>!= 200</td></tr>
+  </table>
+</div>
+
+<!-- ═══ RESOURCE BUDGET ═══ -->
+<div class="cutout">
+  <h3>Presupuesto de Recursos</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Componente</th><th>RAM</th><th>CPU idle</th><th>CPU stream</th></tr>
+    <tr><td>MediaMTX (rpicam CSI)</td><td>~15–30 MB</td><td>~1%</td><td>~5%</td></tr>
+    <tr><td>Oasis (Node.js)</td><td>~80 MB</td><td>~2%</td><td>~3%</td></tr>
+    <tr><td>Mumble audio (opcional)</td><td>~15 MB</td><td>~1%</td><td>~3%</td></tr>
+    <tr><td>node-datachannel</td><td>~20 MB</td><td>~0%</td><td>~5%</td></tr>
+    <tr><td>Sistema (Bookworm)</td><td>~120 MB</td><td>—</td><td>—</td></tr>
+    <tr class="highlight-row"><td><b>TOTAL</b></td><td><b>~250–265 MB</b></td><td>~4%</td><td>~16%</td></tr>
+    <tr><td colspan="4" style="text-align:center;"><b>Disponible en 1 GB: ~735–750 MB libres</b></td></tr>
+  </table>
+  <div class="tip">Arq. 2 es la más ligera con vídeo real (vs ~490 MB de Arq. 5, ~350 MB de Arq. 3). La diferencia: rpicam nativo no necesita ffmpeg residente para vídeo CSI.</div>
+</div>
+
+<!-- ═══ KEYWORDS ═══ -->
+<div class="cutout" style="text-align:center;">
+  <span class="kw">deploy</span>
+  <span class="kw-inv">systemd</span>
+  <span class="kw">Docker</span>
+  <span class="kw-inv">vchiq</span>
+  <span class="kw">hardware_detect</span>
+  <span class="kw-inv">fallback</span>
+  <span class="kw">monitoreo</span>
+  <span class="kw-inv">API v3</span>
+  <span class="kw">rpicam</span>
+  <span class="kw-inv">250 MB</span>
+</div>
+
+<footer class="footer">
+  SPEC · Deploy Arq. 2 · SSB-WebRTC · Solar Net Hub
+</footer>
+
+</body>
+</html>
