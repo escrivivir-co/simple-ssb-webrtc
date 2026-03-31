@@ -72,6 +72,7 @@
     <b>MJPEG</b>: servidor envía <code>multipart/x-mixed-replace</code> — cada parte es un JPEG. El browser actualiza &lt;img&gt; automáticamente.<br>
     <b>HLS</b>: ffmpeg genera playlist <code>.m3u8</code> + segmentos <code>.ts</code>; servidor sirve archivos estáticos. Chrome 142+ (2026) lo soporta nativo sin JS.
   </div>
+  <div class="warn"><b>⚠️ Cobertura HLS sin JS</b>: no existe un formato único sin JS que cubra el 100% de navegadores. Firefox desktop no soporta HLS nativo. Estrategia recomendada: HLS nativo donde aplique + fallback MJPEG para el resto. <span style="font-size:0.55rem;opacity:0.7;">(Fuente: web-rtc.md §2.1)</span></div>
 </div>
 
 <!-- ════════════ AUDIO TECHNIQUES ════════════ -->

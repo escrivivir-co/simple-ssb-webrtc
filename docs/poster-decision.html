@@ -33,6 +33,11 @@
 
 <div class="washi"></div>
 
+<!-- ════════════ TL;DR ════════════ -->
+<div class="callout">
+  <b>TL;DR</b> — ¿Acceso remoto o Tor? → <a href="poster-arq3.html">Arq. 3</a> (Mumble + go2rtc). ¿Solo LAN, RAM mínima? → <a href="poster-arq6.html">Arq. 6</a> (µStreamer + Mumble). ¿Simplicidad sin Tor audio? → <a href="poster-arq1.html">Arq. 1</a> (go2rtc solo). Las 6 arquitecturas tienen poster con specs detalladas.
+</div>
+
 <!-- ════════════ 6 ARCHITECTURES AT A GLANCE ════════════ -->
 <div class="cutout">
   <h3>☞ 6 Arquitecturas — Vista Rápida</h3>
@@ -90,11 +95,11 @@
     </tr>
     <tr>
       <td><b>Spec</b></td>
-      <td><span class="no-poster">pendiente</span></td>
-      <td><span class="no-poster">pendiente</span></td>
+      <td><a class="link-poster" href="poster-arq1.html">☞ POSTER</a></td>
+      <td><a class="link-poster" href="poster-arq2.html">☞ POSTER</a></td>
       <td><a class="link-poster" href="poster-arq3.html">☞ POSTER</a></td>
-      <td><span class="no-poster">pendiente</span></td>
-      <td><span class="no-poster">pendiente</span></td>
+      <td><a class="link-poster" href="poster-arq4.html">☞ POSTER</a></td>
+      <td><a class="link-poster" href="poster-arq5.html">☞ POSTER</a></td>
       <td><a class="link-poster" href="poster-arq6.html">☞ POSTER</a></td>
     </tr>
   </table>
@@ -159,36 +164,36 @@
     <!-- PRIORITY TABLE -->
     <div class="cutout tilt-l">
       <div class="tape tape-tr"></div>
-      <h3>Ranking por Prioridad</h3>
+      <h3>Seleccion por Contexto</h3>
       <table class="tbl" style="font-size:0.65rem;">
-        <tr><th>Prio</th><th>Arq.</th><th>Condición</th></tr>
+        <tr><th>Contexto</th><th>Arq.</th><th>Condicion principal</th></tr>
         <tr class="prio-row">
-          <td>1ª</td>
+          <td>LAN + remoto + Tor</td>
           <td><span class="arq-tag selected">Arq. 3</span></td>
           <td>Siempre válida. CSI+USB. Tor. Audio superior. HLS remoto</td>
         </tr>
         <tr class="prio-row">
-          <td>1ª bis</td>
+          <td>Solo LAN + RAM critica</td>
           <td><span class="arq-tag selected">Arq. 6</span></td>
           <td>Solo LAN / RAM crítica. CSI+USB. MJPEG only. La más ligera</td>
         </tr>
         <tr class="prio-row">
-          <td>2ª</td>
+          <td>General sin Tor audio</td>
           <td><span class="arq-tag">Arq. 1</span></td>
           <td>Sin Tor para audio. Simplicidad máxima, un solo binario</td>
         </tr>
         <tr class="prio-row">
-          <td>3ª</td>
+          <td>CSI fija + mW critico</td>
           <td><span class="arq-tag">Arq. 2</span></td>
           <td>Solo CSI fija. Cada mW cuenta. No se prevé USB</td>
         </tr>
         <tr class="prio-row">
-          <td>4ª</td>
+          <td>P2P real sin Tor (CSI)</td>
           <td><span class="arq-tag">Arq. 5</span></td>
           <td>Solo CSI. WebRTC P2P real. No Tor. Riesgo mantenimiento</td>
         </tr>
         <tr class="prio-row">
-          <td>5ª</td>
+          <td>Baseline minima</td>
           <td><span class="arq-tag">Arq. 4</span></td>
           <td>Mínima. ffmpeg→HLS. 4-12s latencia. Escribe a microSD</td>
         </tr>

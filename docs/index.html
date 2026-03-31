@@ -81,7 +81,7 @@
 
   <a class="main-link" href="poster-decision.html">☞ VER MATRIZ COMPLETA</a>
 
-  <div style="font-size:0.68rem;margin-top:6px;">Árbol de decisión, ranking por prioridad, tabla Cámara × Fase, comparativa de las 6 arquitecturas. Punto de entrada al sitio.</div>
+  <div style="font-size:0.68rem;margin-top:6px;">Árbol de decisión, selección por contexto, tabla Cámara × Fase, comparativa de las 6 arquitecturas. Punto de entrada al sitio.</div>
 </div>
 
 <!-- ═══ PROTOCOLO ═══ -->
@@ -142,11 +142,24 @@
   <div style="font-size:0.68rem;margin-top:6px;">4 técnicas vídeo + 4 audio, mapa de latencia, estrategia dual MJPEG/HLS por fase, matriz browser/codec, paquetes npm.</div>
 </div>
 
+<!-- ═══ SEGURIDAD ═══ -->
+<div class="poster-card tilt-r">
+  <div class="badge">§2.3</div>
+  <div class="tape tape-tl"></div>
+
+  <h2>Seguridad: CSRF, CSP, WebRTC ↔ Tor</h2>
+  <div class="meta">Defensa en profundidad, CSP dual, tensión WebRTC/Tor, recomendaciones por fase</div>
+
+  <a class="main-link" href="poster-security.html">☞ VER POSTER COMPLETO</a>
+
+  <div style="font-size:0.68rem;margin-top:6px;">CSRF sin JS (3 capas: Referer check, SameSite=Strict, CSP form-action). Estrategia CSP dual (LAN vs remoto). Tabla de escenarios WebRTC ↔ Tor. Recomendación por fase.</div>
+</div>
+
 <hr class="divider">
 
 <!-- ═══ ARQ. 1 ═══ -->
 <div class="poster-card">
-  <div class="badge">ARQ. 1 · 2ª PRIORIDAD</div>
+  <div class="badge">ARQ. 1 · CONTEXTO: SIMPLE / SIN TOR AUDIO</div>
   <div class="tape tape-tl"></div>
 
   <h2>go2rtc — relay integral</h2>
@@ -182,7 +195,7 @@
 
 <!-- ═══ ARQ. 3 ═══ -->
 <div class="poster-card tilt-r">
-  <div class="badge">ARQ. 3 · 1ª PRIORIDAD</div>
+  <div class="badge">ARQ. 3 · CONTEXTO: REMOTO + TOR</div>
   <div class="tape tape-tl"></div>
 
   <h2>go2rtc + Mumble + node-datachannel</h2>
@@ -202,7 +215,7 @@
 
 <!-- ═══ ARQ. 6 ═══ -->
 <div class="poster-card tilt-l">
-  <div class="badge">ARQ. 6 · 1ª BIS · SOLO LAN</div>
+  <div class="badge">ARQ. 6 · CONTEXTO: SOLO LAN / RAM CRITICA</div>
   <div class="tape tape-tr"></div>
 
   <h2>µStreamer + Mumble + node-datachannel</h2>

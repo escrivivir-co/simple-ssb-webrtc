@@ -91,7 +91,7 @@ log:
   <h3>API HTTP Endpoints (:1984)</h3>
   <table class="tbl" style="font-size:0.6rem;">
     <tr><th>Endpoint</th><th>Formato</th><th>Content-Type</th><th>HTML sin JS</th><th>Latencia</th></tr>
-    <tr><td>/api/stream.mjpeg?src={name}</td><td>MJPEG continuo</td><td>multipart/x-mixed-replace</td><td>✔ <code>&lt;img&gt;</code></td><td>100–300 ms</td></tr>
+    <tr><td>/api/frame.mjpeg?src={name}</td><td>MJPEG continuo</td><td>multipart/x-mixed-replace</td><td>✔ <code>&lt;img&gt;</code></td><td>100–300 ms</td></tr>
     <tr><td>/api/stream.m3u8?src={name}</td><td>HLS fMP4</td><td>application/vnd.apple.mpegurl</td><td>✔ <code>&lt;video&gt;</code></td><td>2–6 s</td></tr>
     <tr><td>/api/stream.mp4?src={name}</td><td>MP4 progressive</td><td>video/mp4</td><td>✔ <code>&lt;video&gt;</code></td><td>~1 s</td></tr>
     <tr><td>/api/frame.jpeg?src={name}</td><td>JPEG snapshot</td><td>image/jpeg</td><td>✔ <code>&lt;img&gt;</code></td><td>instant</td></tr>

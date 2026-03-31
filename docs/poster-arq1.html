@@ -24,7 +24,7 @@
   <div>CPU<br><span style="font-size:1.5rem;">5–20</span>%</div>
   <div>Latencia vídeo<br><span style="font-size:1.5rem;">100–300</span> ms</div>
   <div>Binario<br><span style="font-size:1.5rem;">~15</span> MB</div>
-  <div>Prioridad<br><span style="font-size:1.5rem;">2ª</span></div>
+  <div>Contexto<br><span style="font-size:1.5rem;">General</span></div>
 </div>
 
 <!-- ═══ ARCHITECTURE DIAGRAM ═══ -->
@@ -75,8 +75,9 @@
 <div class="cutout tilt-r">
   <h3>3 · CSI y USB: ambas soportadas</h3>
   <div class="key-concept">
-    go2rtc lee <b>cualquier cámara expuesta como V4L2</b> — funciona con CSI y USB sin cambiar la config base. Para CSI se puede optar por <code>exec:rpicam-vid</code> (encode H.264 HW) para máxima eficiencia. Para USB con H.264 nativo: <code>v4l2:///dev/video0#format=h264</code> (passthrough). <b>La arquitectura más flexible en hardware.</b>
+    go2rtc lee <b>cualquier cámara expuesta como V4L2</b> — funciona con CSI y USB sin cambiar la config base. Para CSI se puede optar por <code>exec:rpicam-vid</code> (encode H.264 HW) para máxima eficiencia. Para USB con H.264 nativo: <code>v4l2:///dev/video0#format=h264</code> (passthrough). <b>La arquitectura más flexible en hardware.</b> <span style="font-size:0.55rem;opacity:0.7;">→ <a href="poster-csi-usb.html">Comparación completa en poster CSI/USB</a></span>
   </div>
+  <div class="warn"><b>⚠️ USB H.264 encoding</b>: cámaras USB sin H.264 nativo requieren paso extra (UVC → buffer userspace → V4L2 M2M <code>/dev/video11</code> → H.264 HW). Overhead CPU ~10–15% por la copia y conversión de formatos. Ver <a href="poster-csi-usb.html">poster CSI/USB</a> para detalles. <span style="font-size:0.55rem;opacity:0.7;">(Fuente: web-rtc-ext.md EXT-2)</span></div>
 </div>
 
 <div class="cutout tilt-l">
@@ -134,7 +135,7 @@
     <tr><td>Web UI</td><td>Sí (:1984) — API HTTP + WebSocket</td></tr>
     <tr><td>ffmpeg necesario</td><td>No (captura directa V4L2/ALSA)</td></tr>
     <tr><td>Cámara</td><td>CSI ✔ · USB ✔ · Ambas ✔</td></tr>
-    <tr><td>Prioridad</td><td><span class="hl-box">2ª</span> — si no Tor para audio; simplicidad máxima</td></tr>
+    <tr><td>Contexto</td><td><span class="hl-box">General</span> — si no se necesita Tor para audio; simplicidad máxima</td></tr>
   </table>
 </div>
 
@@ -185,12 +186,12 @@ api:
   <h3>Endpoints go2rtc (:1984)</h3>
   <table class="tbl" style="font-size:0.6rem;">
     <tr><th>Endpoint</th><th>Protocolo</th><th>HTML sin JS</th><th>Latencia</th></tr>
-    <tr><td>/api/stream.mjpeg?src=solar-cam</td><td>MJPEG</td><td>✔ <code>&lt;img&gt;</code></td><td>100–300 ms</td></tr>
+    <tr><td>/api/frame.mjpeg?src=solar-cam</td><td>MJPEG</td><td>✔ <code>&lt;img&gt;</code></td><td>100–300 ms</td></tr>
     <tr><td>/api/stream.m3u8?src=solar-cam</td><td>HLS fMP4</td><td>✔ <code>&lt;video&gt;</code></td><td>2–6 s</td></tr>
     <tr><td>/api/frame.jpeg?src=solar-cam</td><td>JPEG snapshot</td><td>✔ <code>&lt;img&gt;</code></td><td>instantáneo</td></tr>
     <tr><td>/api/stream.mp4?src=solar-cam</td><td>MP4 progressive</td><td>✔ <code>&lt;video&gt;</code></td><td>~1 s</td></tr>
     <tr><td>/api/webrtc?src=solar-cam</td><td>WebRTC WHEP</td><td>✘ (JS)</td><td>~100 ms</td></tr>
-    <tr><td>/api/stream.mjpeg?src=solar-mic</td><td>N/A (audio stream)</td><td>—</td><td>—</td></tr>
+    <tr><td>/api/stream.m3u8?src=solar-mic</td><td>Audio HLS</td><td>✔ <code>&lt;video&gt;</code></td><td>2–6 s</td></tr>
     <tr><td>/api/ws?src=solar-mic</td><td>WebSocket audio</td><td>✘ (JS)</td><td>~200 ms</td></tr>
   </table>
   <div class="tip">Para audio sin JS: go2rtc transcodifica PCMA→FLAC para HLS. Accesible vía <code>&lt;video src="/api/stream.m3u8?src=solar-mic"&gt;</code>. Alternativa: proxy ffmpeg OGG en Oasis.</div>
@@ -201,7 +202,7 @@ api:
   <h3>Integración con Oasis</h3>
   <table class="tbl" style="font-size:0.6rem;">
     <tr><th>Ruta Oasis</th><th>Proxy a</th><th>HTML</th></tr>
-    <tr><td>GET /video.mjpeg</td><td>go2rtc :1984/api/stream.mjpeg?src=solar-cam</td><td><code>&lt;img src="/video.mjpeg"&gt;</code></td></tr>
+    <tr><td>GET /video.mjpeg</td><td>go2rtc :1984/api/frame.mjpeg?src=solar-cam</td><td><code>&lt;img src="/video.mjpeg"&gt;</code></td></tr>
     <tr><td>GET /video.m3u8</td><td>go2rtc :1984/api/stream.m3u8?src=solar-cam</td><td><code>&lt;video src="/video.m3u8"&gt;</code></td></tr>
     <tr><td>GET /snapshot</td><td>go2rtc :1984/api/frame.jpeg?src=solar-cam</td><td><code>&lt;img src="/snapshot"&gt;</code></td></tr>
     <tr><td>GET /audio</td><td>ffmpeg RTSP→OGG o HLS go2rtc</td><td><code>&lt;audio src="/audio"&gt;</code></td></tr>

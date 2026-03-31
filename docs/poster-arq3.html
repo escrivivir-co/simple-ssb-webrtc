@@ -104,7 +104,7 @@
     <summary>¿Por qué go2rtc y no ffmpeg directo?</summary>
     <div class="detail-body">
       <div class="key-concept">go2rtc captura <b>directamente</b> de V4L2 (cámara) y ALSA (mic) sin lanzar ffmpeg como subproceso. Un solo binario Go sirve MJPEG + HLS + RTSP + WebRTC. ffmpeg solo entra si se necesita transcodificación especial.</div>
-      <div class="tip">go2rtc usa ffmpeg internamente <b>bajo demanda</b> solo para resampling WebRTC o formatos exóticos. Para MJPEG/HLS básico no lo necesita.</div>
+      <div class="tip">go2rtc usa ffmpeg internamente <b>bajo demanda</b> solo para resampling WebRTC o formatos exóticos. Para MJPEG/HLS básico no lo necesita. → <a href="poster-arq1.html">Detalle completo de go2rtc en poster Arq. 1</a></div>
     </div>
   </details>
 
@@ -112,14 +112,15 @@
     <summary>¿Por qué Mumble para audio y no go2rtc?</summary>
     <div class="detail-body">
       <div class="key-concept"><b>Audio bidireccional</b>: go2rtc solo envía audio (downstream). Mumble es full-duplex nativo. Además murmurd ya está corriendo → +0 MB de RAM nueva. Y funciona sobre <b>Tor</b> (TCP tunnel), mientras que go2rtc ALSA solo sirve por HTTP local.</div>
+      <div class="warn"><b>⚠️ Nota de implementación</b>: el full-duplex Mumble es nativo entre clientes Mumble. Para retorno de audio desde browser SNH sin JS nativo, se necesita bridge/inyección (estrategias 3A/3B/3C en web-rtc.md §3). La complejidad del bridge depende del camino elegido.</div>
     </div>
   </details>
 
   <details>
     <summary>HLS: cómo funciona sin JS</summary>
     <div class="detail-body">
-      <div class="key-concept">HLS usa <b>&lt;video src="/video.m3u8"&gt;</b> — los browsers modernos (Safari nativo, Firefox/Chrome con soporte MSE via <b>hls.js</b>... pero queremos cero JS). En el browser local del SNH usamos <b>MJPEG</b> (sin JS). HLS es para el <b>peer remoto</b> que accede vía Tor con un browser estándar que SÍ tiene JS.</div>
-      <div class="warn"><b>HLS sin JS</b> solo funciona nativamente en Safari. Para Firefox/Chrome remoto se necesitaría hls.js (JS). Alternativa sin JS para remoto: MJPEG directo (pero más BW sobre Tor).</div>
+      <div class="key-concept">HLS usa <b>&lt;video src="/video.m3u8"&gt;</b>. En 2026 hay soporte nativo sin JS en Safari y en navegadores modernos compatibles (segun version). En el browser local del SNH seguimos usando <b>MJPEG</b> (sin JS) como opcion universal.</div>
+      <div class="warn"><b>Estrategia recomendada</b>: HLS nativo donde aplique + fallback MJPEG para Firefox desktop u otros casos sin soporte nativo. Evitar frases absolutas por browser sin contexto de version.</div>
     </div>
   </details>
 
@@ -363,7 +364,7 @@ app.get('/snapshot', (req, res) =&gt; {
   );
   next();
 });</div>
-      <div class="tip"><b>script-src 'none'</b>: refuerza cero JS a nivel CSP. Si el remote necesita hls.js, crear una ruta /remote con CSP más permisiva.</div>
+      <div class="tip"><b>script-src 'none'</b>: refuerza cero JS a nivel CSP. Si el remote necesita hls.js, crear una ruta /remote con CSP más permisiva. → <a href="poster-security.html">Ver poster de seguridad</a></div>
     </div>
   </details>
 </div>
@@ -493,7 +494,7 @@ app.get('/snapshot', (req, res) =&gt; {
     <b>3.</b> Un solo <b>go2rtc.yaml</b> — todas las fuentes declaradas ahí. No flags CLI sueltos.<br>
     <b>4.</b> Proxy con <b>upstream.destroy() on req.close</b> — evitar socket leaks.<br>
     <b>5.</b> <b>Cache-Control: no-store</b> en todas las rutas de streaming.<br>
-    <b>6.</b> <b>CSP script-src 'none'</b> en rutas LAN. Si remoto necesita hls.js → ruta /remote con CSP separada.<br>
+    <b>6.</b> <b>CSP script-src 'none'</b> en rutas LAN. Si remoto necesita hls.js → ruta /remote con CSP separada. → <a href="poster-security.html">poster de seguridad</a><br>
     <b>7.</b> Snapshots → guardar como <b>SSB blob</b> (inmutable, content-addressed).<br>
     <b>8.</b> <b>node-datachannel</b> solo para datos P2P, nunca para media.<br>
   </div>
@@ -541,7 +542,7 @@ app.get('/snapshot', (req, res) =&gt; {
   RPi 3B · Yocto Poky 4.3.4 → Docker → Debian Bookworm ·
   go2rtc (Go ~15 MB) · Mumble :64738 · Oasis :3000 ·
   Solar 22W · 1 GB LPDDR2 · VideoCore IV ·
-  Generado desde web-rtc-ext.md EXT-5C / EXT-7 · Prioridad 1ª
+  Generado desde web-rtc-ext.md EXT-5C / EXT-7 · Contexto: remoto + Tor
 </footer>
 
 </body>

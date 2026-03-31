@@ -161,7 +161,7 @@ function proxyGo2rtc(localPath, go2rtcPath) {
 }
 
 <span class="comment">// Registrar rutas</span>
-app.get('/video.mjpeg', proxyGo2rtc('/video.mjpeg', '/api/stream.mjpeg?src=solar-cam'));
+app.get('/video.mjpeg', proxyGo2rtc('/video.mjpeg', '/api/frame.mjpeg?src=solar-cam'));
 app.get('/video.m3u8',  proxyGo2rtc('/video.m3u8',  '/api/stream.m3u8?src=solar-cam'));
 app.get('/snapshot',    proxyGo2rtc('/snapshot',     '/api/frame.jpeg?src=solar-cam'));</div>
   <div class="warn">Node.js actúa como proxy puro (pipe). Cero buffer en memoria, cero CPU de media. El browser ve rutas limpias bajo el dominio Oasis.</div>

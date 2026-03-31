@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Seguridad — CSRF, CSP y WebRTC ↔ Tor</title>
+<link rel="stylesheet" href="poster-template/fanzine.css">
+</head>
+<body>
+
+<div class="nav-back"><a href="index.html">◀ ÍNDICE</a></div>
+
+<!-- ════════════ HEADER ════════════ -->
+<header class="header">
+  <div class="stamp">§2.3</div>
+  <h1>Seguridad: CSRF, CSP y WebRTC ↔ Tor</h1>
+  <div class="sub">Página canónica de seguridad — Solar Net Hub · SSB-WebRTC</div>
+  <div class="sub2">Fuente: web-rtc.md §2.3</div>
+</header>
+
+<div class="washi"></div>
+
+<!-- ════════════ ZERO JS = ZERO XSS ════════════ -->
+<div class="cutout tilt-r">
+  <div class="tape tape-tl"></div>
+  <h3>Cero JS en cliente = Cero XSS</h3>
+  <div class="key-concept">
+    Oasis rechazó JS en el cliente. Consecuencia de seguridad positiva: <b>sin JS no hay XSS posible</b> — no hay runtime que un atacante pueda secuestrar. El vector de ataque restante es <b>CSRF</b>.
+  </div>
+</div>
+
+<!-- ════════════ CSRF ════════════ -->
+<div class="cutout tilt-l">
+  <div class="tape tape-tr"></div>
+  <h3>Defensa CSRF en profundidad</h3>
+  <div class="key-concept">
+    Un sitio malicioso en otra pestaña podría enviar un <code>&lt;form&gt;</code> POST a <code>localhost:3000/webrtc/*</code>. Tres capas complementarias lo impiden:
+  </div>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Capa</th><th>Mecanismo</th><th>Bloquea en</th></tr>
+    <tr>
+      <td><b>Referer check</b></td>
+      <td>Middleware Koa rechaza POST cuyo <code>Referer</code> no sea <code>localhost:PORT</code></td>
+      <td>Servidor</td>
+    </tr>
+    <tr>
+      <td><b>SameSite=Strict</b></td>
+      <td>Cookie de sesión no se envía en requests cross-origin</td>
+      <td>Navegador</td>
+    </tr>
+    <tr>
+      <td><b>CSP form-action 'self'</b></td>
+      <td>Los formularios solo pueden POST a <code>'self'</code></td>
+      <td>DOM</td>
+    </tr>
+  </table>
+  <div class="tip">Las tres capas son complementarias. Un atacante necesitaría saltarse las tres simultáneamente.</div>
+</div>
+
+<!-- ════════════ CSP STRATEGY ════════════ -->
+<div class="cutout tilt-r">
+  <div class="tape tape-tl"></div>
+  <h3>Estrategia CSP dual</h3>
+  <div class="key-concept">
+    <b>Ruta LAN</b> (browser local SNH): <code>script-src 'none'</code> — bloqueo total de JS.<br>
+    <b>Ruta remota</b> (si HLS requiere hls.js en Firefox desktop): CSP separada con <code>script-src 'self'</code> en ruta <code>/remote</code> específica.
+  </div>
+  <div class="warn"><b>Principio</b>: la ruta más restrictiva (<code>script-src 'none'</code>) es la default. Solo se relaja en rutas concretas que lo justifiquen, y solo para JS propio.</div>
+
+  <h4>Headers de seguridad recomendados</h4>
+  <pre class="code"><code>Content-Security-Policy: default-src 'self'; script-src 'none'; img-src 'self'; media-src 'self'; form-action 'self'; frame-ancestors 'none'
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: same-origin</code></pre>
+  <div class="tip">Ver implementación concreta en <a href="spec-arq3/oasis-proxy.html">spec-arq3/oasis-proxy</a> y <a href="spec-arq6/oasis-proxy.html">spec-arq6/oasis-proxy</a>.</div>
+</div>
+
+<!-- ════════════ WEBRTC ↔ TOR ════════════ -->
+<div class="cutout tilt-l">
+  <div class="tape tape-tr"></div>
+  <h3>WebRTC ↔ Tor: tensión fundamental</h3>
+  <div class="key-concept">
+    El SNH enruta tráfico por <b>Tor + Privoxy</b>. WebRTC necesita la IP real del peer para ICE. Esto crea un conflicto directo:
+  </div>
+  <pre class="code" style="text-align:center;font-size:0.6rem;">
+Tor oculta tu IP  ←──── CONFLICTO ────→  WebRTC revela tu IP
+(privacidad)                              (para ICE candidates)</pre>
+
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Escenario</th><th>IP expuesta</th><th>Privacidad</th><th>WebRTC</th></tr>
+    <tr>
+      <td><b>LAN sin Tor</b> (Fase 1–2)</td>
+      <td>IP local (192.168.x.x)</td>
+      <td>N/A (red local)</td>
+      <td>✅ Plena</td>
+    </tr>
+    <tr>
+      <td><b>Internet + STUN</b></td>
+      <td>IP pública real</td>
+      <td>❌ IP revelada</td>
+      <td>✅ Funciona</td>
+    </tr>
+    <tr>
+      <td><b>Internet + TURN</b></td>
+      <td>IP del servidor TURN</td>
+      <td>⚠️ Parcial</td>
+      <td>✅ Funciona</td>
+    </tr>
+    <tr>
+      <td><b>Todo por Tor</b></td>
+      <td>IP del exit node</td>
+      <td>✅ Máxima</td>
+      <td>❌ ICE falla (no UDP)</td>
+    </tr>
+    <tr>
+      <td><b>TURN sobre Tor</b></td>
+      <td>IP del exit node</td>
+      <td>⚠️ TURN conoce exit</td>
+      <td>⚠️ Latencia 500ms+</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ════════════ RECOMENDACIÓN POR FASE ════════════ -->
+<div class="cutout tilt-r">
+  <div class="tape tape-tl"></div>
+  <h3>Recomendación por fase</h3>
+  <table class="tbl" style="font-size:0.6rem;">
+    <tr><th>Fase</th><th>Estrategia</th><th>Notas</th></tr>
+    <tr>
+      <td><b>Fase 1–2 (LAN)</b></td>
+      <td>Tor no interviene. WebRTC funciona con candidatos host directamente.</td>
+      <td>Sin conflicto</td>
+    </tr>
+    <tr>
+      <td><b>Fase 3 (Internet) — Pragmática</b></td>
+      <td>TURN propio del pub SSB. Deshabilitar candidatos <code>srflx</code>.</td>
+      <td><code>iceTransportPolicy: 'relay'</code></td>
+    </tr>
+    <tr>
+      <td><b>Fase 3 — Máxima privacidad</b></td>
+      <td>No usar WebRTC para media. Audio por Mumble/TCP sobre Tor hidden service. Vídeo por go2rtc/HLS sobre HTTP. Datos por DataChannel sobre TURN/TCP.</td>
+      <td>→ <a href="poster-arq3.html">Arq. 3</a></td>
+    </tr>
+  </table>
+  <div class="callout">
+    Mumble tuneliza audio por <b>TCP nativo</b>, que funciona directamente sobre Tor como hidden service. Sin TURN, sin STUN, sin ICE. Simplicidad radical.
+  </div>
+</div>
+
+<!-- ════════════ FIREFOX NOTE ════════════ -->
+<div class="cutout tilt-l">
+  <div class="tape tape-tr"></div>
+  <h3>Nota Firefox SNH</h3>
+  <div class="tip">
+    Firefox del SNH tiene <code>media.peerconnection.ice.default_address_only = true</code> por defecto, lo que limita los candidatos ICE a una sola interfaz. Mitiga parcialmente la filtración de IPs múltiples pero <b>no</b> el conflicto fundamental con Tor.
+  </div>
+</div>
+
+<!-- ════════════ CROSS-REFS ════════════ -->
+<div class="cutout" style="text-align:center;">
+  <h3>Referencias cruzadas</h3>
+  <div style="font-size:0.65rem;">
+    <a href="poster-arq3.html">Arq. 3 — Tor Ready</a> · 
+    <a href="spec-arq3/oasis-proxy.html">spec-arq3/oasis-proxy — CSP dual</a> · 
+    <a href="spec-arq6/oasis-proxy.html">spec-arq6/oasis-proxy — headers</a> · 
+    <a href="spec-arq5/media-proxy.html">spec-arq5/media-proxy — CSP</a> · 
+    <a href="poster-protocolo.html">Protocolo WebRTC — ICE</a> · 
+    <a href="poster-glosario.html">Glosario — CSRF, CSP</a>
+  </div>
+</div>
+
+<!-- ════════════ FOOTER ════════════ -->
+<footer class="footer">
+  Seguridad: CSRF, CSP, WebRTC ↔ Tor · SSB-WebRTC · Solar Net Hub<br>
+  <span style="font-size:0.6rem;">web-rtc.md §2.3</span>
+</footer>
+
+</body>
+</html>
